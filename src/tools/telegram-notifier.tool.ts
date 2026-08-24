@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../config';
 import { GameSpec } from '../agents/game-designer.agent';
+import { PublishResult } from './git-publisher.tool';
 
 export interface GeneratedAssetInfo {
   name: string;
@@ -9,13 +10,25 @@ export interface GeneratedAssetInfo {
   localPath: string;
 }
 
+export interface BuildCheckResult {
+  backendPassed: boolean;
+  frontendPassed: boolean;
+}
+
 export class TelegramNotifierTool {
   /**
-   * Sends the full game report, generated images, and text prompts to the user's Telegram
+   * Sends the full game report, generated images, and text prompts to the user's Telegram.
+   * Reports the pipeline's real outcome (build + publish status) instead of always
+   * claiming success — a prior version hardcoded a "SUCCESSFUL" banner regardless of
+   * whether the build actually compiled or anything was pushed.
    */
   static async sendGameNotification(params: {
     spec: GameSpec;
     assets: GeneratedAssetInfo[];
+    success: boolean;
+    buildCheck: BuildCheckResult;
+    backendPublish?: PublishResult;
+    frontendPublish?: PublishResult;
   }): Promise<boolean> {
     const botToken = config.telegram.botToken;
     const chatId = config.telegram.adminChatId;
@@ -32,13 +45,36 @@ export class TelegramNotifierTool {
     try {
       console.log(`📱 [Telegram Notifier] Sending game report & images to Telegram chat ${chatId}...`);
 
-      // 1. Send Summary Message with Prompts
-      const summaryText = `🎰 <b>NEW AI GAME GENERATED!</b> 🎰\n\n` +
+      const issues: string[] = [];
+      if (!params.buildCheck.backendPassed) issues.push('game_backend failed to compile');
+      if (!params.buildCheck.frontendPassed) issues.push('game-frontend failed to compile');
+      if (params.backendPublish && !params.backendPublish.pushed) {
+        issues.push(`game_backend not pushed (${params.backendPublish.error})`);
+      }
+      if (params.frontendPublish && !params.frontendPublish.pushed) {
+        issues.push(`game-frontend not pushed (${params.frontendPublish.error})`);
+      }
+
+      const prLines = [
+        params.backendPublish?.prUrl ? `⚙️ <b>Backend PR:</b> ${params.backendPublish.prUrl}` : '',
+        params.frontendPublish?.prUrl ? `🎨 <b>Frontend PR:</b> ${params.frontendPublish.prUrl}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const headline = params.success
+        ? '🎰 <b>NEW AI GAME GENERATED — build passed, PRs open for review</b> 🎰'
+        : '⚠️ <b>GAME GENERATION FINISHED WITH PROBLEMS — nothing was pushed</b> ⚠️';
+
+      const summaryText =
+        `${headline}\n\n` +
         `🎮 <b>Title:</b> ${params.spec.gameTitle} (${params.spec.gameTitleRu})\n` +
         `🎨 <b>Theme:</b> ${params.spec.theme} (${params.spec.themeRu})\n` +
         `🎯 <b>Target RTP:</b> ${(params.spec.targetRtp * 100).toFixed(1)}%\n` +
         `⚡ <b>Max Multiplier:</b> ${params.spec.maxMultiplier}×\n` +
         `🌐 <b>Route:</b> <code>/games/${params.spec.gameId}</code>\n\n` +
+        (issues.length ? `⚠️ <b>Issues:</b>\n${issues.map((i) => `• ${i}`).join('\n')}\n\n` : '') +
+        (prLines ? `${prLines}\n\n` : '') +
         `─────────────────────\n` +
         `💡 <b>IMAGE PROMPTS FOR OTHER TOOLS (Midjourney / Flux / SD):</b>\n\n` +
         params.assets
@@ -48,7 +84,7 @@ export class TelegramNotifierTool {
           )
           .join('\n');
 
-      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      const sendMessageRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -57,6 +93,13 @@ export class TelegramNotifierTool {
           parse_mode: 'HTML',
         }),
       });
+      if (!sendMessageRes.ok) {
+        const body = await sendMessageRes.text().catch(() => '<unreadable body>');
+        console.warn(
+          `⚠️ [Telegram Notifier] sendMessage failed (HTTP ${sendMessageRes.status}): ${body}`,
+        );
+        return false;
+      }
 
       // 2. Send each generated image file with its prompt as caption
       for (const asset of params.assets) {
@@ -85,10 +128,16 @@ export class TelegramNotifierTool {
           docFormData.append('document', blob, path.basename(asset.localPath));
           docFormData.append('caption', `🎨 <b>${asset.name}</b>: ${asset.prompt}`);
           docFormData.append('parse_mode', 'HTML');
-          await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
+          const docRes = await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
             method: 'POST',
             body: docFormData,
           });
+          if (!docRes.ok) {
+            const body = await docRes.text().catch(() => '<unreadable body>');
+            console.warn(
+              `⚠️ [Telegram Notifier] sendDocument fallback for ${asset.name} also failed (HTTP ${docRes.status}): ${body}`,
+            );
+          }
         }
       }
 

@@ -29,6 +29,13 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID || '',
   },
+  github: {
+    // Fine-grained PAT with contents:write + pull-requests:write on
+    // grishaharutyunyan/game_backend and grishaharutyunyan/game_frontend.
+    // Without it, GitPublisherTool logs a clear error and the pipeline
+    // reports failure instead of silently skipping the push.
+    token: process.env.GITHUB_TOKEN || '',
+  },
   adminBackend: {
     url: process.env.ADMIN_BACKEND_URL || 'http://localhost:7773',
     apiKey: process.env.ADMIN_API_KEY || '',
