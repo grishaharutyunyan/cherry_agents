@@ -67,7 +67,7 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: 'Endpoint not found' }));
 });
 
-server.listen(PORT, () => {
+server.listen(Number(PORT), '0.0.0.0', () => {
   console.log(`\n======================================================`);
   console.log(`🤖 CHERRY GAME AGENTS SERVICE RUNNING ON CONTABO VPS`);
   console.log(`🌐 Port:    http://0.0.0.0:${PORT}`);
