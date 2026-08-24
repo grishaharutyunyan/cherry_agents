@@ -1,0 +1,102 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { config } from '../config';
+import { GameSpec } from '../agents/game-designer.agent';
+
+export interface GeneratedAssetInfo {
+  name: string;
+  prompt: string;
+  localPath: string;
+}
+
+export class TelegramNotifierTool {
+  /**
+   * Sends the full game report, generated images, and text prompts to the user's Telegram
+   */
+  static async sendGameNotification(params: {
+    spec: GameSpec;
+    assets: GeneratedAssetInfo[];
+  }): Promise<boolean> {
+    const botToken = config.telegram.botToken;
+    const chatId = config.telegram.adminChatId;
+
+    if (!botToken || !chatId) {
+      console.log('ℹ️ [Telegram Notifier] TELEGRAM_BOT_TOKEN or TELEGRAM_ADMIN_CHAT_ID not set. Skipping Telegram notification.');
+      console.log('\n💡 [Image Prompts for External Tools (Midjourney / Flux / SD)]');
+      params.assets.forEach((a, i) => {
+        console.log(`   ${i + 1}. [${a.name.toUpperCase()}]: "${a.prompt}"`);
+      });
+      return false;
+    }
+
+    try {
+      console.log(`📱 [Telegram Notifier] Sending game report & images to Telegram chat ${chatId}...`);
+
+      // 1. Send Summary Message with Prompts
+      const summaryText = `🎰 <b>NEW AI GAME GENERATED!</b> 🎰\n\n` +
+        `🎮 <b>Title:</b> ${params.spec.gameTitle} (${params.spec.gameTitleRu})\n` +
+        `🎨 <b>Theme:</b> ${params.spec.theme} (${params.spec.themeRu})\n` +
+        `🎯 <b>Target RTP:</b> ${(params.spec.targetRtp * 100).toFixed(1)}%\n` +
+        `⚡ <b>Max Multiplier:</b> ${params.spec.maxMultiplier}×\n` +
+        `🌐 <b>Route:</b> <code>/games/${params.spec.gameId}</code>\n\n` +
+        `─────────────────────\n` +
+        `💡 <b>IMAGE PROMPTS FOR OTHER TOOLS (Midjourney / Flux / SD):</b>\n\n` +
+        params.assets
+          .map(
+            (a, i) =>
+              `<b>${i + 1}. ${a.name.toUpperCase()}</b>:\n<code>${a.prompt}</code>\n`,
+          )
+          .join('\n');
+
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: summaryText,
+          parse_mode: 'HTML',
+        }),
+      });
+
+      // 2. Send each generated image file with its prompt as caption
+      for (const asset of params.assets) {
+        if (!fs.existsSync(asset.localPath)) continue;
+
+        const fileBuffer = fs.readFileSync(asset.localPath);
+        const blob = new Blob([fileBuffer]);
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        formData.append('photo', blob, path.basename(asset.localPath));
+        formData.append(
+          'caption',
+          `🎨 <b>${asset.name.toUpperCase()}</b>\n\nPrompt:\n<code>${asset.prompt}</code>`,
+        );
+        formData.append('parse_mode', 'HTML');
+
+        const photoRes = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!photoRes.ok) {
+          // Fallback to sendDocument if sendPhoto fails on certain filetypes
+          const docFormData = new FormData();
+          docFormData.append('chat_id', chatId);
+          docFormData.append('document', blob, path.basename(asset.localPath));
+          docFormData.append('caption', `🎨 <b>${asset.name}</b>: ${asset.prompt}`);
+          docFormData.append('parse_mode', 'HTML');
+          await fetch(`https://api.telegram.org/bot${botToken}/sendDocument`, {
+            method: 'POST',
+            body: docFormData,
+          });
+        }
+      }
+
+      console.log('✅ [Telegram Notifier] Successfully sent report and images to Telegram!');
+      return true;
+    } catch (err: any) {
+      console.warn('⚠️ [Telegram Notifier] Failed to send Telegram notification:', err.message);
+      return false;
+    }
+  }
+}
