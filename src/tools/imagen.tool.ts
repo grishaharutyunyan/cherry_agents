@@ -1,6 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { GoogleAuth } from 'google-auth-library';
 import { config } from '../config';
+
+// Vertex AI's :predict endpoint requires a real OAuth2 access token, not an
+// API key — reused across calls since GoogleAuth caches/refreshes the token.
+const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
 
 export class ImagenTool {
   /**
@@ -16,11 +21,17 @@ export class ImagenTool {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    const apiKey = config.gcp.geminiApiKey;
     console.log(`🎨 [Imagen 3] Generating asset: "${params.prompt}" -> ${params.targetFilePath}`);
 
-    // If API key is not configured, create a placeholder SVG/PNG for dev mode
-    if (!apiKey) {
+    let accessToken: string | null | undefined;
+    try {
+      accessToken = (await auth.getAccessToken()) ?? undefined;
+    } catch (e: any) {
+      console.warn(`⚠️ Could not obtain Application Default Credentials for Vertex AI: ${e.message}`);
+    }
+
+    // If ADC is not configured, create a placeholder SVG/PNG for dev mode
+    if (!accessToken) {
       const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
         <rect width="512" height="512" fill="#0d1126"/>
         <circle cx="256" cy="256" r="180" fill="#c9a227" opacity="0.3"/>
@@ -41,7 +52,7 @@ export class ImagenTool {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           instances: [{ prompt: params.prompt }],
