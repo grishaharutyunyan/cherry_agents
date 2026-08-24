@@ -76,6 +76,37 @@ const INNOVATION_ARCHETYPES = [
   },
 ];
 
+const REQUIRED_SPEC_FIELDS: (keyof GameSpec)[] = [
+  'gameId',
+  'gameTitle',
+  'gameTitleRu',
+  'theme',
+  'themeRu',
+  'accentColor',
+  'secondaryColor',
+  'gameType',
+  'targetRtp',
+  'provablyFairPattern',
+  'maxMultiplier',
+  'paytable',
+  'assetManifest',
+  'soundCues',
+  'playfulFeatures',
+];
+
+function assertValidGameSpec(spec: GameSpec): void {
+  const missing = REQUIRED_SPEC_FIELDS.filter((field) => spec[field] === undefined || spec[field] === null);
+  if (missing.length > 0) {
+    throw new Error(`Gemini returned an incomplete GameSpec, missing field(s): ${missing.join(', ')}`);
+  }
+  if (!Array.isArray(spec.paytable) || spec.paytable.length === 0) {
+    throw new Error('Gemini returned a GameSpec with an empty or invalid paytable');
+  }
+  if (!Array.isArray(spec.assetManifest) || spec.assetManifest.length === 0) {
+    throw new Error('Gemini returned a GameSpec with an empty or invalid assetManifest');
+  }
+}
+
 export class GameDesignerAgent {
   static async planGame(userPrompt: string): Promise<GameSpec> {
     console.log(`🧠 [Game Designer Agent] Innovating new Web3 casino game design from: "${userPrompt}"`);
@@ -91,7 +122,10 @@ REQUIREMENTS:
 3. Multi-language: Provide both English and Russian titles, themes, and outcome labels.
 4. Aesthetics: Web3/crypto dark glassmorphism, neon glow accents, energetic playful vibe.
 5. Paytable: Sum of (probability * multiplier) must equal targetRtp.
-6. Assets: Exactly 2 items in assetManifest: 'background' (bg.png) and 'hero_asset' (hero.png). NEVER generate images for buttons, chips, or click states (they must use pure CSS/Tailwind).`;
+6. Assets: Exactly 2 items in assetManifest: 'background' (bg.png) and 'hero_asset' (hero.png). NEVER generate images for buttons, chips, or click states (they must use pure CSS/Tailwind).
+
+Return a single JSON object with EXACTLY these top-level keys, all of which are required (never omit or null one): gameId, gameTitle, gameTitleRu, theme, themeRu, accentColor, secondaryColor, gameType, targetRtp, provablyFairPattern, maxMultiplier, paytable, assetManifest, soundCues, playfulFeatures.
+accentColor and secondaryColor must each be a "#rrggbb" hex string.`;
 
     try {
       const spec = await VertexAiTool.generateJson<GameSpec>({
@@ -99,6 +133,7 @@ REQUIREMENTS:
         userPrompt,
         knowledgeBaseContext: `${mathKb}\n\n${uiKb}`,
       });
+      assertValidGameSpec(spec);
       return spec;
     } catch (e) {
       // Dynamic Randomization Archetype Fallback if offline
