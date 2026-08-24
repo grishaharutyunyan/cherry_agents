@@ -29,6 +29,21 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     adminChatId: process.env.TELEGRAM_ADMIN_CHAT_ID || '',
   },
+  adminBackend: {
+    url: process.env.ADMIN_BACKEND_URL || 'http://localhost:7773',
+    apiKey: process.env.ADMIN_API_KEY || '',
+  },
+  redis: {
+    // Points at the same physical Redis instance cherry_backend/game_backend
+    // may use, but on its own logical DB (index, not just a key prefix) so
+    // job records never collide with round/session state or share a
+    // FLUSHDB blast radius with the game engine's live data.
+    url: process.env.REDIS_URI || 'redis://localhost:6379',
+    db: parseInt(process.env.REDIS_DB ?? '1', 10),
+  },
+  job: {
+    ttlSeconds: 24 * 60 * 60,
+  },
   math: {
     defaultTargetRtp: 0.965,
     minRtp: 0.95,
