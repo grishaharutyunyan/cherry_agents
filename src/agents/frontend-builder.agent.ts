@@ -145,12 +145,12 @@ export const PixiCanvas: React.FC<PixiCanvasProps> = ({ status, result }) => {
       // Web3 Plasma Center Core
       const core = new Graphics();
       core.circle(300, 200, 80);
-      core.fill({ color: 0x${spec.accentColor.replace('#', '') || '00f0ff'}, alpha: 0.2 });
+      core.fill({ color: 0x${(spec.accentColor || '#00f0ff').replace('#', '')}, alpha: 0.2 });
       app.stage.addChild(core);
 
       const outerRing = new Graphics();
       outerRing.circle(300, 200, 120);
-      outerRing.stroke({ width: 2, color: 0x${spec.secondaryColor.replace('#', '') || 'ff007f'}, alpha: 0.4 });
+      outerRing.stroke({ width: 2, color: 0x${(spec.secondaryColor || '#ff007f').replace('#', '')}, alpha: 0.4 });
       app.stage.addChild(outerRing);
 
       // 60fps animation ticker
