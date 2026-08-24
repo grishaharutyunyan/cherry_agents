@@ -7,10 +7,12 @@ export class AudioSynthesizerTool {
    * Generates or copies clean Web3 casino sound cues into the game frontend assets directory
    */
   static injectGameAudio(gameSlug: string, soundCues: string[] = []): string[] {
+    const frontendDir = config.paths.frontend || path.resolve(__dirname, '../../game-frontend');
+    const slug = gameSlug || 'game';
     const soundsDir = path.join(
-      config.paths.frontend,
+      frontendDir,
       'public/games',
-      gameSlug,
+      slug,
       'assets/sounds',
     );
 

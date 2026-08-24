@@ -60,7 +60,7 @@ export class TelegramNotifierTool {
 
       // 2. Send each generated image file with its prompt as caption
       for (const asset of params.assets) {
-        if (!fs.existsSync(asset.localPath)) continue;
+        if (!asset || !asset.localPath || typeof asset.localPath !== 'string' || !fs.existsSync(asset.localPath)) continue;
 
         const fileBuffer = fs.readFileSync(asset.localPath);
         const blob = new Blob([fileBuffer]);

@@ -11,10 +11,8 @@ export class DbCatalogSeederTool {
     const timestamp = Date.now();
     const migrationFilename = `${timestamp}-add-${spec.gameId}-game.sql`;
 
-    const migrationsDir = path.join(
-      config.paths.root,
-      'cherry_backend/migrations',
-    );
+    const baseDir = config.paths.backend || path.resolve(__dirname, '../../game_backend');
+    const migrationsDir = path.join(baseDir, 'migrations');
 
     if (!fs.existsSync(migrationsDir)) {
       fs.mkdirSync(migrationsDir, { recursive: true });

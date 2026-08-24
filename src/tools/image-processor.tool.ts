@@ -6,12 +6,16 @@ export class ImageProcessorTool {
    * Processes generated PNG assets to verify file integrity and apply transparency optimizations
    */
   static processAsset(filePath: string): boolean {
-    if (!fs.existsSync(filePath)) {
-      console.warn(`⚠️ [Image Processor] File not found: ${filePath}`);
+    if (!filePath || typeof filePath !== 'string') {
       return false;
     }
 
     try {
+      if (!fs.existsSync(filePath)) {
+        console.warn(`⚠️ [Image Processor] File not found: ${filePath}`);
+        return false;
+      }
+
       const stats = fs.statSync(filePath);
       if (stats.size === 0) {
         console.warn(`⚠️ [Image Processor] Empty file detected: ${filePath}`);
