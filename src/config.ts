@@ -8,7 +8,7 @@ export const config = {
     projectId: process.env.GCP_PROJECT_ID || 'cherry-casino-ai',
     location: process.env.GCP_LOCATION || 'us-central1',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
     imagenModel: process.env.IMAGEN_MODEL || 'imagen-3.0-generate-002',
   },
   paths: {
