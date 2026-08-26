@@ -41,7 +41,14 @@ async function generateContentWithRetry(
   let delayMs = 3000;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await ai.models.generateContent(args);
+      // Fresh clone every attempt, never the same object reference twice — real precedent for
+      // why: a design-phase call that should have been deterministic threw a client-side
+      // "Mixing Content and Parts" validation error ~42s into its first call, matching this
+      // retry loop's backoff timing almost exactly (2026-08-27). The likely mechanism is the SDK
+      // (or something upstream of it) mutating `args` as a side effect of a failed attempt,
+      // which then corrupts the identical object reused on the next retry — structuredClone
+      // makes that impossible regardless of whether this exact mechanism is proven.
+      return await ai.models.generateContent(structuredClone(args));
     } catch (err) {
       if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
