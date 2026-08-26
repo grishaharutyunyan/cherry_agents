@@ -117,10 +117,25 @@ CREATE TABLE IF NOT EXISTS ai_agent_run_events (
 
 CREATE INDEX IF NOT EXISTS "IDX_ai_agent_runs_phase_locked" ON ai_agent_runs ("phase", "lockedUntil");
 CREATE INDEX IF NOT EXISTS "IDX_ai_agent_run_events_run_created" ON ai_agent_run_events ("runId", "createdAt");
+
+-- The statements above ran as the superuser you're connected as, not as
+-- cherry_agents_app — being the database's OWNER does not automatically grant
+-- rights on tables someone else created inside it. Fix that explicitly and
+-- unconditionally (safe to re-run, no-op once already correct) rather than
+-- relying on cherry_agents_app happening to be the one that ran CREATE TABLE.
+ALTER TABLE ai_agent_runs OWNER TO cherry_agents_app;
+ALTER TABLE ai_agent_run_events OWNER TO cherry_agents_app;
+ALTER SEQUENCE ai_agent_runs_id_seq OWNER TO cherry_agents_app;
+ALTER SEQUENCE ai_agent_run_events_id_seq OWNER TO cherry_agents_app;
 SQL
 
-echo "==> Verifying: connecting AS cherry_agents_app (not the superuser) to confirm it actually works"
-PGPASSWORD="$CHERRY_AGENTS_DB_PASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U cherry_agents_app -d cherry_agents -c "\dt"
+echo "==> Verifying: connecting AS cherry_agents_app (not the superuser) and actually reading/writing, not just listing tables"
+PGPASSWORD="$CHERRY_AGENTS_DB_PASSWORD" psql -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U cherry_agents_app -d cherry_agents <<'SQL'
+\dt
+INSERT INTO ai_agent_runs (prompt, "triggeredByAdminId") VALUES ('db:setup verification row', 'setup-script');
+SELECT id, phase FROM ai_agent_runs WHERE prompt = 'db:setup verification row';
+DELETE FROM ai_agent_runs WHERE prompt = 'db:setup verification row';
+SQL
 
 echo "==> Done. Put this in DB_AGENTS_URI (both cherry_agents/.env and cherry_admin_backend's env):"
 echo "    postgresql://cherry_agents_app:${CHERRY_AGENTS_DB_PASSWORD}@${PGHOST}:5432/cherry_agents"
