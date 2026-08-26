@@ -21,6 +21,10 @@ async function branchExistsLocally(cwd: string, branch: string): Promise<boolean
   }
 }
 
+async function getCurrentBranch(cwd: string): Promise<string> {
+  return git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
+}
+
 async function assertClean(cwd: string): Promise<void> {
   const status = await git(cwd, ['status', '--porcelain']);
   if (status) {
@@ -33,8 +37,17 @@ async function assertClean(cwd: string): Promise<void> {
  * retry within the same run (or a build phase re-run after a QA-routed retry) just re-checks-out
  * the same branch and keeps committing to it, matching create-game.md's "same branch, new commit"
  * convention for its Claude-Code-driven counterpart.
+ *
+ * The clean-tree check only applies when actually SWITCHING branches — if we're already on
+ * `branch`, skip it entirely. A retry that's already sitting on its own feature branch, with its
+ * own prior attempt's uncommitted content still staged there (e.g. a commit that failed a
+ * commit-msg hook), must not be blocked by that leftover; nothing is at risk since no checkout is
+ * happening, and the next commitAll() picks the staged content back up correctly.
  */
 export async function ensureBranch(cwd: string, branch: string, baseBranch = 'dev'): Promise<void> {
+  if ((await getCurrentBranch(cwd)) === branch) {
+    return;
+  }
   await assertClean(cwd);
   if (await branchExistsLocally(cwd, branch)) {
     await git(cwd, ['checkout', branch]);
@@ -48,6 +61,9 @@ export async function ensureBranch(cwd: string, branch: string, baseBranch = 'de
 
 /** Checks out an already-existing branch — for QA/finalize phases, which run after a build phase already created it. */
 export async function checkoutBranch(cwd: string, branch: string): Promise<void> {
+  if ((await getCurrentBranch(cwd)) === branch) {
+    return;
+  }
   await assertClean(cwd);
   await git(cwd, ['checkout', branch]);
 }
