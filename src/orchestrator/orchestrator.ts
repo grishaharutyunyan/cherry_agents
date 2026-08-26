@@ -111,30 +111,35 @@ async function handleBuilding(run: AiAgentRunRow): Promise<void> {
   const makeHandler = (builder: 'backend' | 'frontend'): AgentEventHandler => (event) =>
     appendEvent(run.id, 'building', event.type, { ...(event.detail as Record<string, unknown>), builder });
 
-  const [backendResult, frontendResult] = await Promise.allSettled([
-    runBackendBuildPhase(run.parsedFields, run.specDocContent, null, makeHandler('backend')),
-    runFrontendBuildPhase(run.parsedFields, run.specDocContent, null, makeHandler('frontend')),
-  ]);
+  // Sequential, not parallel — running both builders concurrently roughly doubles peak Gemini
+  // request rate and reliably tripped Vertex AI's rate limit under real load (2026-08-27, even
+  // with retry-with-backoff in place). Slower wall-clock, but each attempt is far more likely to
+  // actually finish instead of failing on a 429.
+  const reasons: string[] = [];
+  let backendBranch: string | undefined;
+  let frontendBranch: string | undefined;
 
-  if (backendResult.status === 'rejected' || frontendResult.status === 'rejected') {
-    const reasons: string[] = [];
-    if (backendResult.status === 'rejected') reasons.push(`backend: ${errMsg(backendResult.reason)}`);
-    if (frontendResult.status === 'rejected') reasons.push(`frontend: ${errMsg(frontendResult.reason)}`);
+  try {
+    backendBranch = (await runBackendBuildPhase(run.parsedFields, run.specDocContent, null, makeHandler('backend'))).branch;
+  } catch (err) {
+    reasons.push(`backend: ${errMsg(err)}`);
+  }
+
+  try {
+    frontendBranch = (await runFrontendBuildPhase(run.parsedFields, run.specDocContent, null, makeHandler('frontend'))).branch;
+  } catch (err) {
+    reasons.push(`frontend: ${errMsg(err)}`);
+  }
+
+  if (reasons.length > 0) {
     const failureReason = `Building phase failed — never proceeds to QA on half a build. ${reasons.join('; ')}`;
     await appendEvent(run.id, 'building', 'error', { message: failureReason });
     await updateRun(run.id, { phase: 'failed', failureReason, completedAt: new Date() });
     return;
   }
 
-  await appendEvent(run.id, 'building', 'phase_completed', {
-    backendBranch: backendResult.value.branch,
-    frontendBranch: frontendResult.value.branch,
-  });
-  await updateRun(run.id, {
-    phase: 'qa',
-    backendBranch: backendResult.value.branch,
-    frontendBranch: frontendResult.value.branch,
-  });
+  await appendEvent(run.id, 'building', 'phase_completed', { backendBranch, frontendBranch });
+  await updateRun(run.id, { phase: 'qa', backendBranch, frontendBranch });
 }
 
 async function handleQa(run: AiAgentRunRow): Promise<void> {
@@ -223,14 +228,25 @@ async function handleRetryBuild(run: AiAgentRunRow): Promise<void> {
   const makeHandler = (builder: 'backend' | 'frontend'): AgentEventHandler => (event) =>
     appendEvent(run.id, 'retry_build', event.type, { ...(event.detail as Record<string, unknown>), builder });
 
-  const tasks: Promise<unknown>[] = [];
-  if (retryBackend) tasks.push(runBackendBuildPhase(run.parsedFields, run.specDocContent, feedback, makeHandler('backend')));
-  if (retryFrontend) tasks.push(runFrontendBuildPhase(run.parsedFields, run.specDocContent, feedback, makeHandler('frontend')));
+  // Sequential, not parallel — see handleBuilding's identical rationale.
+  const reasons: string[] = [];
+  if (retryBackend) {
+    try {
+      await runBackendBuildPhase(run.parsedFields, run.specDocContent, feedback, makeHandler('backend'));
+    } catch (err) {
+      reasons.push(`backend: ${errMsg(err)}`);
+    }
+  }
+  if (retryFrontend) {
+    try {
+      await runFrontendBuildPhase(run.parsedFields, run.specDocContent, feedback, makeHandler('frontend'));
+    } catch (err) {
+      reasons.push(`frontend: ${errMsg(err)}`);
+    }
+  }
 
-  const settled = await Promise.allSettled(tasks);
-  const rejected = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
-  if (rejected.length > 0) {
-    const failureReason = `Retry build failed — ${rejected.map((r) => errMsg(r.reason)).join('; ')}`;
+  if (reasons.length > 0) {
+    const failureReason = `Retry build failed — ${reasons.join('; ')}`;
     await appendEvent(run.id, 'retry_build', 'error', { message: failureReason });
     await updateRun(run.id, { phase: 'failed', failureReason, completedAt: new Date() });
     return;

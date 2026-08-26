@@ -91,7 +91,7 @@ export async function runFrontendBuildPhase(
         makeRunShellTool('run_shell', config.gameFrontendPath, BUILD_SHELL_ALLOWLIST),
       ],
       initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
-      maxTurns: config.maxTurnsPerPhase,
+      maxTurns: config.maxTurnsBuild,
       onEvent,
       requireToolCall: {
         toolName: 'run_shell',
@@ -103,7 +103,7 @@ export async function runFrontendBuildPhase(
     });
 
     if (result.stoppedReason === 'max_turns_exceeded') {
-      throw new Error(`Frontend build phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+      throw new Error(`Frontend build phase exceeded ${config.maxTurnsBuild} turns without finishing`);
     }
 
     const shaAfter = await getHeadSha(config.gameFrontendPath);

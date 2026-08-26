@@ -89,7 +89,7 @@ export async function runBackendBuildPhase(
         makeRunShellTool('run_shell', config.gameBackendPath, BUILD_SHELL_ALLOWLIST),
       ],
       initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
-      maxTurns: config.maxTurnsPerPhase,
+      maxTurns: config.maxTurnsBuild,
       onEvent,
       requireToolCall: {
         toolName: 'run_shell',
@@ -101,7 +101,7 @@ export async function runBackendBuildPhase(
     });
 
     if (result.stoppedReason === 'max_turns_exceeded') {
-      throw new Error(`Backend build phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+      throw new Error(`Backend build phase exceeded ${config.maxTurnsBuild} turns without finishing`);
     }
 
     const shaAfter = await getHeadSha(config.gameBackendPath);

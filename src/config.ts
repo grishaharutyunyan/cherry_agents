@@ -60,6 +60,10 @@ export const config = {
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? 10_000),
   lockTtlSeconds: Number(process.env.LOCK_TTL_SECONDS ?? 120),
   maxTurnsPerPhase: Number(process.env.MAX_TURNS_PER_PHASE ?? 40),
+  // Build phases iterate (write → lint → build → fix → re-lint...) far more than design/QA do —
+  // a real backend build hit the shared 40-turn cap while still doing legitimate work
+  // (2026-08-27). Separate, higher default; design/QA stay on maxTurnsPerPhase.
+  maxTurnsBuild: Number(process.env.MAX_TURNS_BUILD ?? 70),
 
   workerId: process.env.HOSTNAME ?? `agents-${process.pid}`,
 };
