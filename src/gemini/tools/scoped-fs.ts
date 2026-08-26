@@ -8,6 +8,9 @@ export class PathEscapeError extends Error {
 
 function isWithin(resolved: string, root: string): boolean {
   const normalizedRoot = path.resolve(root);
+  // Filesystem root is a degenerate case: `normalizedRoot + path.sep` would be "//", which no
+  // real absolute path starts with, so every path would wrongly fail this check.
+  if (normalizedRoot === path.sep) return true;
   return resolved === normalizedRoot || resolved.startsWith(normalizedRoot + path.sep);
 }
 
