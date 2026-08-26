@@ -72,7 +72,7 @@ match this codebase's actual shape (polling worker, no HTTP server, plain
 - Push this repo to GitHub and set up its own CI image build to
   `ghcr.io/grishaharutyunyan/cherry_agents` (mirroring the other services).
 - `GEMINI_API_KEY` — generate it yourself from your GCP project.
-- Run `db/create-role.sql` once against each Postgres instance (local, then
+- Run `npm run db:setup` once against each Postgres instance (local, then
   staging) — see "Database" below.
 - Once M3 (real builder agents that commit) and M5 (push + `gh pr create`)
   land, the container will additionally need: `git`/`gh` installed, a
@@ -92,12 +92,18 @@ permissions one — Postgres can't query across databases in one connection
 user/wallet/transaction data even in principle, regardless of any grant
 mistake down the line.
 
-Run `db/create-role.sql` once per Postgres instance (as a superuser) — it
-creates a `cherry_agents_app` role, a `cherry_agents` database owned outright
-by that role, and the two tables in it. `cherry_admin_backend`'s
-`AiAgentsModule` connects to this same database through its own separate
-`AgentsDatabase` TypeORM connection (`DB_AGENTS_URI` in its own env) — it's
-the only other thing that ever touches these tables.
+Run `npm run db:setup` once per Postgres instance (needs a superuser
+connection via `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`, plus
+`CHERRY_AGENTS_DB_PASSWORD` for the new role — see `db/setup.sh` header) —
+it creates a `cherry_agents_app` role, a `cherry_agents` database owned
+outright by that role, and the two tables in it, then verifies by
+connecting AS that role (not the superuser) and listing them. Idempotent —
+safe to re-run; it skips role/database creation if they already exist and
+uses `CREATE TABLE/TYPE/INDEX IF NOT EXISTS` for the schema.
+`cherry_admin_backend`'s `AiAgentsModule` connects to this same database
+through its own separate `AgentsDatabase` TypeORM connection
+(`DB_AGENTS_URI` in its own env) — it's the only other thing that ever
+touches these tables.
 
 Verified locally end-to-end: the app's own `db/client.ts`/`db/runs.repo.ts`
 connects and queries successfully through the restricted role: reads,
