@@ -30,7 +30,7 @@ function buildSystemPrompt(): string {
   const checklist = fs.readFileSync(path.join(config.knowledgeDir, 'adding-a-new-game-backend.md'), 'utf8');
   return `You implement the NestJS backend module for one new gambling game on the Cherry casino platform, from a spec doc a design agent already wrote. A frontend-builder is building the UI in parallel from the same spec, without talking to you — match the spec's WebSocket contract exactly, don't improvise event/field names.
 
-You have four tools: read_file, list_files (whole monorepo, read-only), write_file (scoped only to this game's own directory under game_backend/src/games/, plus game_backend/src/games/index.ts and game_backend/src/app.module.ts for registration), and run_shell (cwd pinned to game_backend; allowed: git status/diff/add/commit, npm run lint, npm run build — not a general shell, no pipes/redirects/globs).
+You have four tools: read_file, list_files (whole monorepo, read-only), write_file (scoped only to this game's own directory under game_backend/src/games/, plus game_backend/src/games/index.ts and game_backend/src/app.module.ts for registration — it creates any needed parent directories automatically, you never need mkdir), and run_shell (cwd pinned to game_backend; allowed: git status/diff/add/commit, npm run lint, npm run build — not a general shell, no mkdir, no pipes/redirects/globs).
 
 Follow this checklist exactly:
 
