@@ -23,11 +23,17 @@ export const config = {
   get geminiApiKey(): string {
     return required('GEMINI_API_KEY');
   },
+  // gemini-2.5-* was retired for new API keys (confirmed live, 2026-08-26 — a
+  // 404 with "no longer available to new users... use models/gemini-3.6-flash").
+  // Defaulting every phase to the confirmed-working flash tier for now; upgrade
+  // design/build to a pro-tier model via env override once you've confirmed its
+  // exact current name (not verified here — don't guess a second model name off
+  // one error message).
   models: {
-    parse: process.env.GEMINI_MODEL_PARSE ?? 'gemini-2.5-flash',
-    design: process.env.GEMINI_MODEL_DESIGN ?? 'gemini-2.5-pro',
-    build: process.env.GEMINI_MODEL_BUILD ?? 'gemini-2.5-pro',
-    qa: process.env.GEMINI_MODEL_QA ?? 'gemini-2.5-flash',
+    parse: process.env.GEMINI_MODEL_PARSE ?? 'gemini-3.6-flash',
+    design: process.env.GEMINI_MODEL_DESIGN ?? 'gemini-3.6-flash',
+    build: process.env.GEMINI_MODEL_BUILD ?? 'gemini-3.6-flash',
+    qa: process.env.GEMINI_MODEL_QA ?? 'gemini-3.6-flash',
   },
 
   /**
