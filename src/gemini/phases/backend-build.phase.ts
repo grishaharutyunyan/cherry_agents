@@ -105,7 +105,10 @@ export async function runBackendBuildPhase(
 
   const shaAfter = await getHeadSha(config.gameBackendPath);
   if (shaAfter === shaBefore) {
-    throw new Error('Backend build phase finished without committing any changes to game_backend');
+    throw new Error(
+      `Backend build phase finished without committing any changes to game_backend. ` +
+        `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+    );
   }
 
   return { branch, reportText: result.finalText };

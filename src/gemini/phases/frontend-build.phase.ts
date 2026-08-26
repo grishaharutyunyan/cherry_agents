@@ -107,7 +107,10 @@ export async function runFrontendBuildPhase(
 
   const shaAfter = await getHeadSha(config.gameFrontendPath);
   if (shaAfter === shaBefore) {
-    throw new Error('Frontend build phase finished without committing any changes to game-frontend');
+    throw new Error(
+      `Frontend build phase finished without committing any changes to game-frontend. ` +
+        `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+    );
   }
 
   return { branch, reportText: result.finalText };

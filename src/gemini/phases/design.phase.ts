@@ -95,13 +95,25 @@ export async function runDesignPhase(
     initialUserMessage: buildUserMessage(parsedFields, specDocPath, approvalFeedback),
     maxTurns: config.maxTurnsPerPhase,
     onEvent,
+    requireToolCall: {
+      toolName: 'write_file',
+      nudgeMessage:
+        `You finished without ever calling write_file — no spec doc has been written yet. ` +
+        `Write the complete spec document now via write_file to exactly this path: ${specDocPath}`,
+    },
   });
 
   if (result.stoppedReason === 'max_turns_exceeded') {
     throw new Error(`Design phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
   }
   if (!fs.existsSync(specAbsPath)) {
-    throw new Error(`Design phase finished but did not write the expected spec file: ${specDocPath}`);
+    // Model's own final text is the only diagnostic signal available when it never called any
+    // tool at all (2026-08-27: a run finished on turn 1 with zero tool calls and no visibility
+    // into why — this is the fix for that blind spot, not yet a fix for the underlying cause).
+    throw new Error(
+      `Design phase finished but did not write the expected spec file: ${specDocPath}. ` +
+        `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+    );
   }
 
   // Commit deterministically here rather than relying on the model to do it — this is what
