@@ -12,10 +12,19 @@ async function tick(): Promise<void> {
 
 async function main(): Promise<void> {
   // Fail fast on missing required config rather than dying on the first tick.
-  void config.geminiApiKey;
+  if (config.useVertexAI) {
+    if (!process.env.GOOGLE_CLOUD_PROJECT) {
+      throw new Error('GOOGLE_GENAI_USE_VERTEXAI is set but GOOGLE_CLOUD_PROJECT is missing');
+    }
+  } else {
+    void config.geminiApiKey;
+  }
   void config.dbUri;
 
-  console.log(`[agents] worker starting as "${config.workerId}", polling every ${config.pollIntervalMs}ms`);
+  console.log(
+    `[agents] worker starting as "${config.workerId}", polling every ${config.pollIntervalMs}ms ` +
+      `(Gemini via ${config.useVertexAI ? `Vertex AI, project=${process.env.GOOGLE_CLOUD_PROJECT}` : 'Developer API key'})`,
+  );
   console.log(`[agents] game_backend: ${config.gameBackendPath}`);
   console.log(`[agents] game-frontend: ${config.gameFrontendPath}`);
 

@@ -4,9 +4,19 @@ import { config } from '../config';
 import { AgentEventHandler, AgentTool } from './types';
 
 let client: GoogleGenAI | null = null;
-function getClient(): GoogleGenAI {
+
+/**
+ * Developer API key mode (default) vs Vertex AI mode (draws from GCP billing/
+ * credits instead of the Gemini API's own billing) — the SDK auto-detects Vertex
+ * mode from GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION
+ * env vars when constructed with no explicit options, and authenticates via
+ * standard GCP Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS
+ * pointing at a service account key, typically) rather than an API key at all —
+ * so an apiKey must NOT be passed here in that mode. See config.useVertexAI.
+ */
+export function getClient(): GoogleGenAI {
   if (!client) {
-    client = new GoogleGenAI({ apiKey: config.geminiApiKey });
+    client = config.useVertexAI ? new GoogleGenAI({}) : new GoogleGenAI({ apiKey: config.geminiApiKey });
   }
   return client;
 }

@@ -122,6 +122,44 @@ including prod, even though the `cherry_agents` worker itself is
 staging-only — its `AgentsDatabase` connection is opened unconditionally at
 boot, so `cherry_admin_backend` won't start without `DB_AGENTS_URI` set).
 
+## Gemini authentication — API key vs Vertex AI mode
+
+Two ways to authenticate, pick one:
+
+**Developer API key (default)** — `GEMINI_API_KEY` set, `GOOGLE_GENAI_USE_VERTEXAI`
+unset/false. Simplest, billed against the key's own ai.google.dev usage.
+
+**Vertex AI mode** — draws from your GCP project's billing/credits instead
+(e.g. a $300 free-trial credit balance) rather than the Developer API's own
+billing. This is a real authentication switch, not just a config flag:
+
+1. Enable the **Vertex AI API** on your GCP project (Console → APIs &
+   Services → Library → "Vertex AI API" → Enable), if not already on.
+2. Create a **dedicated service account** for this worker (IAM & Admin →
+   Service Accounts → Create), grant it the **Vertex AI User** role (least
+   privilege — don't reuse a broader account).
+3. Create a JSON key for that service account and download it. **Never
+   paste its contents anywhere in chat/logs** — get it onto the deploy
+   target (VPS or wherever) directly, e.g. `scp`.
+4. Set these env vars (see `.env.example`):
+   ```
+   GOOGLE_GENAI_USE_VERTEXAI=true
+   GOOGLE_CLOUD_PROJECT=<your-gcp-project-id>
+   GOOGLE_CLOUD_LOCATION=us-central1
+   GOOGLE_APPLICATION_CREDENTIALS=/path/to/the/key.json
+   ```
+   Leave `GEMINI_API_KEY` blank — it's not read in this mode.
+5. In Docker, the key file has to be **bind-mounted into the container** —
+   `GOOGLE_APPLICATION_CREDENTIALS` is a path, and it has to resolve inside
+   the container's filesystem, not the host's. See
+   `docker-compose.staging.yml`'s `cherry_agents` service for the mount.
+
+The SDK (`@google/genai`, via `google-auth-library` underneath) reads
+`GOOGLE_GENAI_USE_VERTEXAI`/`GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION`
+and resolves Application Default Credentials automatically — `src/gemini/client.ts`'s
+`getClient()` just constructs `new GoogleGenAI({})` with no explicit options
+in Vertex mode rather than passing an API key.
+
 ## Env vars
 
 See `.env.example`.

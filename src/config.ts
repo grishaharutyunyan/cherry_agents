@@ -20,6 +20,17 @@ export const config = {
   cherryFrontendPath: path.resolve(process.env.CHERRY_FRONTEND_PATH ?? path.join(monorepoRoot, 'cherry_frontend')),
   knowledgeDir: path.join(__dirname, '..', 'knowledge'),
 
+  /**
+   * When true, Gemini calls draw from GCP billing/credits via Vertex AI instead
+   * of the Gemini Developer API's own billing. Authenticates via standard GCP
+   * Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS pointing at
+   * a service account key, typically) — NOT an API key, so geminiApiKey isn't
+   * required in this mode. GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION and the
+   * ADC credentials themselves are read directly by @google/genai and the
+   * underlying google-auth-library, not through this config object.
+   */
+  useVertexAI: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' || process.env.GOOGLE_GENAI_USE_VERTEXAI === '1',
+
   get geminiApiKey(): string {
     return required('GEMINI_API_KEY');
   },

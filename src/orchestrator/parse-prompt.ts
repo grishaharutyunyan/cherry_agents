@@ -1,7 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
-
 import { config } from '../config';
 import { AiAgentRunParsedFields } from '../db/types';
+import { getClient } from '../gemini/client';
 
 const PARSED_FIELDS_SCHEMA = {
   type: 'object',
@@ -45,7 +44,7 @@ export async function parsePrompt(
   prompt: string,
   overrides: Record<string, unknown> | null,
 ): Promise<AiAgentRunParsedFields | null> {
-  const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
+  const ai = getClient();
 
   const response = await ai.models.generateContent({
     model: config.models.parse,
