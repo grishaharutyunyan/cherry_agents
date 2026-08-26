@@ -92,6 +92,11 @@ export async function pushBranch(cwd: string, branch: string): Promise<void> {
  * "has uncommitted changes" from that leftover, on a branch it had nothing to do with.
  */
 export async function discardChanges(cwd: string): Promise<void> {
-  await git(cwd, ['checkout', '--', '.']);
+  // `git checkout -- .` alone is NOT enough — it only reverts the working tree to match the
+  // INDEX, so anything already `git add`ed is untouched (real precedent: a failed build phase
+  // left staged-but-uncommitted modifications sitting there, 2026-08-27). `reset --hard HEAD`
+  // resets both the index and working tree to the last real commit; `clean -fd` then removes
+  // anything untracked.
+  await git(cwd, ['reset', '--hard', 'HEAD']);
   await git(cwd, ['clean', '-fd']);
 }
