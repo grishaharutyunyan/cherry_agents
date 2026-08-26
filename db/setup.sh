@@ -60,7 +60,7 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ai_agent_runs_phase_enum') THEN
     CREATE TYPE ai_agent_runs_phase_enum AS ENUM (
-      'parsing','design','awaiting_approval','building','qa',
+      'parsing','design','awaiting_approval','building','qa','awaiting_finalize_approval',
       'retry_design','retry_build','finalizing','done','failed','cancelled'
     );
   END IF;
@@ -74,6 +74,11 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Re-running this script after CREATE TYPE already ran once (e.g. an existing staging DB from
+-- before the "awaiting_finalize_approval" PR-review gate was added) needs to add the new value
+-- to the existing enum type — CREATE TYPE IF NOT EXISTS above is a no-op in that case.
+ALTER TYPE ai_agent_runs_phase_enum ADD VALUE IF NOT EXISTS 'awaiting_finalize_approval';
 
 CREATE TABLE IF NOT EXISTS ai_agent_runs (
   "id" SERIAL PRIMARY KEY,

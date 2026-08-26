@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { appendEvent, updateRun } from '../db/runs.repo';
 import { AiAgentRunPhase, AiAgentRunQaCheck, AiAgentRunRow } from '../db/types';
 import { runBackendBuildPhase } from '../gemini/phases/backend-build.phase';
@@ -5,6 +6,7 @@ import { runDesignPhase } from '../gemini/phases/design.phase';
 import { runFrontendBuildPhase } from '../gemini/phases/frontend-build.phase';
 import { runQaPhase } from '../gemini/phases/qa.phase';
 import { AgentEventHandler } from '../gemini/types';
+import { pushBranch } from '../git/repo';
 import { parsePrompt } from './parse-prompt';
 import { runFinalizePhase } from './finalize';
 
@@ -151,7 +153,12 @@ async function handleQa(run: AiAgentRunRow): Promise<void> {
   });
 
   if (result.overallPass) {
-    await updateRun(run.id, { phase: 'finalizing', qaReport: result.checks });
+    // Push both branches now (before human review) so an admin reviewing at the next gate can
+    // click through to a real GitHub compare view — finalize.ts pushes again after adding its
+    // own commit (games.json + handoff docs), which is a safe no-op push if nothing changed here.
+    await pushBranch(config.gameBackendPath, run.backendBranch as string);
+    await pushBranch(config.gameFrontendPath, run.frontendBranch as string);
+    await updateRun(run.id, { phase: 'awaiting_finalize_approval', qaReport: result.checks });
     return;
   }
 
@@ -204,7 +211,10 @@ async function handleRetryBuild(run: AiAgentRunRow): Promise<void> {
     throw new Error('retry_build reached with missing parsedFields/specDocContent');
   }
   await appendEvent(run.id, 'retry_build', 'phase_started');
-  const feedback = summarizeQaFailures(run.qaReport);
+  // A human rejection at the finalize-approval gate leaves approvalFeedback set and
+  // lastQaFailureRoute cleared (see cherry_admin_backend's approve()) — prefer that over an
+  // automated QA finding when both could theoretically be present.
+  const feedback = run.approvalFeedback ?? summarizeQaFailures(run.qaReport);
   const routes = (run.lastQaFailureRoute ?? '').split(',').filter(Boolean);
   // No route info (e.g. this retry_build follows a retry_design) or an ambiguous route retries both.
   const retryBackend = routes.length === 0 || routes.includes('backend') || routes.includes('ambiguous');
@@ -227,7 +237,7 @@ async function handleRetryBuild(run: AiAgentRunRow): Promise<void> {
   }
 
   await appendEvent(run.id, 'retry_build', 'phase_completed', { retriedBackend: retryBackend, retriedFrontend: retryFrontend });
-  await updateRun(run.id, { phase: 'qa' });
+  await updateRun(run.id, { phase: 'qa', approvalFeedback: null });
 }
 
 async function handleFinalizing(run: AiAgentRunRow): Promise<void> {

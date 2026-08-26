@@ -4,6 +4,7 @@ export type AiAgentRunPhase =
   | 'awaiting_approval'
   | 'building'
   | 'qa'
+  | 'awaiting_finalize_approval'
   | 'retry_design'
   | 'retry_build'
   | 'finalizing'
@@ -13,8 +14,8 @@ export type AiAgentRunPhase =
 
 export const AI_AGENT_RUN_TERMINAL_PHASES: AiAgentRunPhase[] = ['done', 'failed', 'cancelled'];
 
-/** Skipped by the worker's claim query — only the admin approve endpoint moves a run out of this phase. */
-export const AI_AGENT_RUN_PARKED_PHASES: AiAgentRunPhase[] = ['awaiting_approval'];
+/** Skipped by the worker's claim query — only the admin approve endpoint moves a run out of these phases. */
+export const AI_AGENT_RUN_PARKED_PHASES: AiAgentRunPhase[] = ['awaiting_approval', 'awaiting_finalize_approval'];
 
 export interface AiAgentRunParsedFields {
   gameId: string;
