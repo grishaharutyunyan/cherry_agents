@@ -5,6 +5,10 @@ import { AgentEventHandler, AgentTool } from './types';
 
 let client: GoogleGenAI | null = null;
 
+function createClient(): GoogleGenAI {
+  return config.useVertexAI ? new GoogleGenAI({}) : new GoogleGenAI({ apiKey: config.geminiApiKey });
+}
+
 /**
  * Developer API key mode (default) vs Vertex AI mode (draws from GCP billing/
  * credits instead of the Gemini API's own billing) — the SDK auto-detects Vertex
@@ -13,10 +17,13 @@ let client: GoogleGenAI | null = null;
  * standard GCP Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS
  * pointing at a service account key, typically) rather than an API key at all —
  * so an apiKey must NOT be passed here in that mode. See config.useVertexAI.
+ *
+ * Cached singleton — used for one-shot calls (parse-prompt.ts) where there's nothing to retry.
+ * generateContentWithRetry below deliberately does NOT use this cached instance; see its comment.
  */
 export function getClient(): GoogleGenAI {
   if (!client) {
-    client = config.useVertexAI ? new GoogleGenAI({}) : new GoogleGenAI({ apiKey: config.geminiApiKey });
+    client = createClient();
   }
   return client;
 }
@@ -32,23 +39,25 @@ function isRateLimitError(err: unknown): boolean {
  * per-project rate limit outright (2026-08-27, RESOURCE_EXHAUSTED on the very first call of both
  * sessions at once). Retries only 429/RESOURCE_EXHAUSTED with exponential backoff; anything else
  * fails immediately, same as before. Bounded to stay well under LOCK_TTL_SECONDS (120s default).
+ *
+ * Deliberately builds a BRAND NEW client for every single attempt (never getClient()'s cached
+ * singleton, never reuses one client instance across retries) — real precedent: with
+ * structuredClone(args) already ruling out request-object mutation, a design-phase call still
+ * failed with a client-side "Mixing Content and Parts" validation error every time, consistently
+ * ~40s in (matching this backoff schedule almost exactly), and this bug only ever appeared after
+ * the retry loop itself was added. That points at state on the CLIENT INSTANCE — not the request
+ * — getting corrupted by a failed attempt and then poisoning the next one. A fresh client per
+ * attempt makes that impossible regardless of the exact internal mechanism. Construction is
+ * cheap (no network call), so this costs nothing on the common no-retry path.
  */
 async function generateContentWithRetry(
-  ai: GoogleGenAI,
   args: Parameters<GoogleGenAI['models']['generateContent']>[0],
   maxRetries = 4,
 ): Promise<Awaited<ReturnType<GoogleGenAI['models']['generateContent']>>> {
   let delayMs = 3000;
   for (let attempt = 0; ; attempt++) {
     try {
-      // Fresh clone every attempt, never the same object reference twice — real precedent for
-      // why: a design-phase call that should have been deterministic threw a client-side
-      // "Mixing Content and Parts" validation error ~42s into its first call, matching this
-      // retry loop's backoff timing almost exactly (2026-08-27). The likely mechanism is the SDK
-      // (or something upstream of it) mutating `args` as a side effect of a failed attempt,
-      // which then corrupts the identical object reused on the next retry — structuredClone
-      // makes that impossible regardless of whether this exact mechanism is proven.
-      return await ai.models.generateContent(structuredClone(args));
+      return await createClient().models.generateContent(structuredClone(args));
     } catch (err) {
       if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -98,14 +107,13 @@ export interface AgenticSessionResult {
  * no silent retry, the phase reports max_turns_exceeded and the orchestrator marks the run FAILED).
  */
 export async function runAgenticSession(params: AgenticSessionParams): Promise<AgenticSessionResult> {
-  const ai = getClient();
   const toolMap = new Map(params.tools.map((tool) => [tool.declaration.name ?? '', tool]));
   const contents: Content[] = [{ role: 'user', parts: [{ text: params.initialUserMessage }] }];
   const calledToolNames = new Set<string>();
   let nudged = false;
 
   for (let turn = 0; turn < params.maxTurns; turn++) {
-    const response = await generateContentWithRetry(ai, {
+    const response = await generateContentWithRetry({
       model: params.model,
       contents,
       config: {
