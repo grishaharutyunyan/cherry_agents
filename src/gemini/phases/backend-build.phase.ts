@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { config } from '../../config';
 import { AiAgentRunParsedFields } from '../../db/types';
-import { ensureBranch, getHeadSha } from '../../git/repo';
+import { discardChanges, ensureBranch, getHeadSha } from '../../git/repo';
 import { gameBranchName } from '../../orchestrator/naming';
 import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
@@ -78,38 +78,47 @@ export async function runBackendBuildPhase(
   const indexFile = path.join(config.gameBackendPath, 'src', 'games', 'index.ts');
   const appModuleFile = path.join(config.gameBackendPath, 'src', 'app.module.ts');
 
-  const result = await runAgenticSession({
-    model: config.models.build,
-    systemPrompt: buildSystemPrompt(),
-    tools: [
-      makeReadFileTool(config.monorepoRoot),
-      makeListFilesTool(config.monorepoRoot),
-      makeWriteFileTool(config.monorepoRoot, [gameDir, indexFile, appModuleFile]),
-      makeRunShellTool('run_shell', config.gameBackendPath, BUILD_SHELL_ALLOWLIST),
-    ],
-    initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
-    maxTurns: config.maxTurnsPerPhase,
-    onEvent,
-    requireToolCall: {
-      toolName: 'run_shell',
-      nudgeMessage:
-        'You finished without ever calling run_shell — nothing has been committed yet. Run ' +
-        'run_shell with command "git" args ["add","-A"], then command "git" args ["commit","-m","<message>"], ' +
-        'then npm run lint and npm run build via run_shell (fix any errors they report), and only then finish.',
-    },
-  });
+  try {
+    const result = await runAgenticSession({
+      model: config.models.build,
+      systemPrompt: buildSystemPrompt(),
+      tools: [
+        makeReadFileTool(config.monorepoRoot),
+        makeListFilesTool(config.monorepoRoot),
+        makeWriteFileTool(config.monorepoRoot, [gameDir, indexFile, appModuleFile]),
+        makeRunShellTool('run_shell', config.gameBackendPath, BUILD_SHELL_ALLOWLIST),
+      ],
+      initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
+      maxTurns: config.maxTurnsPerPhase,
+      onEvent,
+      requireToolCall: {
+        toolName: 'run_shell',
+        nudgeMessage:
+          'You finished without ever calling run_shell — nothing has been committed yet. Run ' +
+          'run_shell with command "git" args ["add","-A"], then command "git" args ["commit","-m","<message>"], ' +
+          'then npm run lint and npm run build via run_shell (fix any errors they report), and only then finish.',
+      },
+    });
 
-  if (result.stoppedReason === 'max_turns_exceeded') {
-    throw new Error(`Backend build phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+    if (result.stoppedReason === 'max_turns_exceeded') {
+      throw new Error(`Backend build phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+    }
+
+    const shaAfter = await getHeadSha(config.gameBackendPath);
+    if (shaAfter === shaBefore) {
+      throw new Error(
+        `Backend build phase finished without committing any changes to game_backend. ` +
+          `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+      );
+    }
+
+    return { branch, reportText: result.finalText };
+  } catch (err) {
+    // Whatever the model wrote before failing was never committed — discard it so this branch
+    // is left clean for a retry, and so an unrelated future run touching a different branch
+    // never inherits this failure's leftover dirty state (real precedent: exactly that happened,
+    // 2026-08-27).
+    await discardChanges(config.gameBackendPath);
+    throw err;
   }
-
-  const shaAfter = await getHeadSha(config.gameBackendPath);
-  if (shaAfter === shaBefore) {
-    throw new Error(
-      `Backend build phase finished without committing any changes to game_backend. ` +
-        `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
-    );
-  }
-
-  return { branch, reportText: result.finalText };
 }

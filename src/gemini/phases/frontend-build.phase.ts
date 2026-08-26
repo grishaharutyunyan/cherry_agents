@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { config } from '../../config';
 import { AiAgentRunParsedFields } from '../../db/types';
-import { ensureBranch, getHeadSha } from '../../git/repo';
+import { discardChanges, ensureBranch, getHeadSha } from '../../git/repo';
 import { gameBranchName } from '../../orchestrator/naming';
 import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
@@ -80,38 +80,45 @@ export async function runFrontendBuildPhase(
   const gameDir = path.join(config.gameFrontendPath, 'games', parsedFields.gameId);
   const pageFile = path.join(config.gameFrontendPath, 'app', 'games', parsedFields.gameId, 'page.tsx');
 
-  const result = await runAgenticSession({
-    model: config.models.build,
-    systemPrompt: buildSystemPrompt(),
-    tools: [
-      makeReadFileTool(config.monorepoRoot),
-      makeListFilesTool(config.monorepoRoot),
-      makeWriteFileTool(config.monorepoRoot, [gameDir, pageFile]),
-      makeRunShellTool('run_shell', config.gameFrontendPath, BUILD_SHELL_ALLOWLIST),
-    ],
-    initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
-    maxTurns: config.maxTurnsPerPhase,
-    onEvent,
-    requireToolCall: {
-      toolName: 'run_shell',
-      nudgeMessage:
-        'You finished without ever calling run_shell — nothing has been committed yet. Run ' +
-        'run_shell with command "git" args ["add","-A"], then command "git" args ["commit","-m","<message>"], ' +
-        'then npm run lint and npm run build via run_shell (fix any errors they report), and only then finish.',
-    },
-  });
+  try {
+    const result = await runAgenticSession({
+      model: config.models.build,
+      systemPrompt: buildSystemPrompt(),
+      tools: [
+        makeReadFileTool(config.monorepoRoot),
+        makeListFilesTool(config.monorepoRoot),
+        makeWriteFileTool(config.monorepoRoot, [gameDir, pageFile]),
+        makeRunShellTool('run_shell', config.gameFrontendPath, BUILD_SHELL_ALLOWLIST),
+      ],
+      initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
+      maxTurns: config.maxTurnsPerPhase,
+      onEvent,
+      requireToolCall: {
+        toolName: 'run_shell',
+        nudgeMessage:
+          'You finished without ever calling run_shell — nothing has been committed yet. Run ' +
+          'run_shell with command "git" args ["add","-A"], then command "git" args ["commit","-m","<message>"], ' +
+          'then npm run lint and npm run build via run_shell (fix any errors they report), and only then finish.',
+      },
+    });
 
-  if (result.stoppedReason === 'max_turns_exceeded') {
-    throw new Error(`Frontend build phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+    if (result.stoppedReason === 'max_turns_exceeded') {
+      throw new Error(`Frontend build phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+    }
+
+    const shaAfter = await getHeadSha(config.gameFrontendPath);
+    if (shaAfter === shaBefore) {
+      throw new Error(
+        `Frontend build phase finished without committing any changes to game-frontend. ` +
+          `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+      );
+    }
+
+    return { branch, reportText: result.finalText };
+  } catch (err) {
+    // See backend-build.phase.ts's identical catch for why: an uncommitted partial write from a
+    // failed session must never poison this branch for a retry or an unrelated later run.
+    await discardChanges(config.gameFrontendPath);
+    throw err;
   }
-
-  const shaAfter = await getHeadSha(config.gameFrontendPath);
-  if (shaAfter === shaBefore) {
-    throw new Error(
-      `Frontend build phase finished without committing any changes to game-frontend. ` +
-        `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
-    );
-  }
-
-  return { branch, reportText: result.finalText };
 }

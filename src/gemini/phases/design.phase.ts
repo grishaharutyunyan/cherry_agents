@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { config } from '../../config';
 import { AiAgentRunParsedFields } from '../../db/types';
-import { commitAll, ensureBranch } from '../../git/repo';
+import { commitAll, discardChanges, ensureBranch } from '../../git/repo';
 import { gameBranchName } from '../../orchestrator/naming';
 import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
@@ -84,48 +84,55 @@ export async function runDesignPhase(
   // building phase's own ensureBranch() refuse to switch branches on the very next run.
   await ensureBranch(config.gameBackendPath, gameBranchName(parsedFields.gameId));
 
-  const result = await runAgenticSession({
-    model: config.models.design,
-    systemPrompt: buildSystemPrompt(),
-    tools: [
-      makeReadFileTool(config.monorepoRoot),
-      makeListFilesTool(config.monorepoRoot),
-      makeWriteFileTool(config.monorepoRoot, [handoffsDir]),
-    ],
-    initialUserMessage: buildUserMessage(parsedFields, specDocPath, approvalFeedback),
-    maxTurns: config.maxTurnsPerPhase,
-    onEvent,
-    requireToolCall: {
-      toolName: 'write_file',
-      nudgeMessage:
-        `You finished without ever calling write_file — no spec doc has been written yet. ` +
-        `Write the complete spec document now via write_file to exactly this path: ${specDocPath}`,
-    },
-  });
+  try {
+    const result = await runAgenticSession({
+      model: config.models.design,
+      systemPrompt: buildSystemPrompt(),
+      tools: [
+        makeReadFileTool(config.monorepoRoot),
+        makeListFilesTool(config.monorepoRoot),
+        makeWriteFileTool(config.monorepoRoot, [handoffsDir]),
+      ],
+      initialUserMessage: buildUserMessage(parsedFields, specDocPath, approvalFeedback),
+      maxTurns: config.maxTurnsPerPhase,
+      onEvent,
+      requireToolCall: {
+        toolName: 'write_file',
+        nudgeMessage:
+          `You finished without ever calling write_file — no spec doc has been written yet. ` +
+          `Write the complete spec document now via write_file to exactly this path: ${specDocPath}`,
+      },
+    });
 
-  if (result.stoppedReason === 'max_turns_exceeded') {
-    throw new Error(`Design phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+    if (result.stoppedReason === 'max_turns_exceeded') {
+      throw new Error(`Design phase exceeded ${config.maxTurnsPerPhase} turns without finishing`);
+    }
+    if (!fs.existsSync(specAbsPath)) {
+      // Model's own final text is the only diagnostic signal available when it never called any
+      // tool at all (2026-08-27: a run finished on turn 1 with zero tool calls and no visibility
+      // into why — this is the fix for that blind spot, not yet a fix for the underlying cause).
+      throw new Error(
+        `Design phase finished but did not write the expected spec file: ${specDocPath}. ` +
+          `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+      );
+    }
+
+    // Commit deterministically here rather than relying on the model to do it — this is what
+    // keeps the working tree clean for the building phase's own ensureBranch()/commit, and
+    // there's nothing design-specific for the model to decide about how this one file gets
+    // committed. Conventional Commits, lowercase type + subject — game_backend's commit-msg hook
+    // (commitlint, @commitlint/config-conventional) rejects anything else.
+    await commitAll(config.gameBackendPath, `docs: add ${parsedFields.gameId} design spec`);
+
+    return {
+      specDocContent: fs.readFileSync(specAbsPath, 'utf8'),
+      specDocPath,
+      reportText: result.finalText,
+    };
+  } catch (err) {
+    // See backend-build.phase.ts's identical catch for why: an uncommitted partial write from a
+    // failed session must never poison this branch for a retry or an unrelated later run.
+    await discardChanges(config.gameBackendPath);
+    throw err;
   }
-  if (!fs.existsSync(specAbsPath)) {
-    // Model's own final text is the only diagnostic signal available when it never called any
-    // tool at all (2026-08-27: a run finished on turn 1 with zero tool calls and no visibility
-    // into why — this is the fix for that blind spot, not yet a fix for the underlying cause).
-    throw new Error(
-      `Design phase finished but did not write the expected spec file: ${specDocPath}. ` +
-        `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
-    );
-  }
-
-  // Commit deterministically here rather than relying on the model to do it — this is what
-  // keeps the working tree clean for the building phase's own ensureBranch()/commit, and there's
-  // nothing design-specific for the model to decide about how this one file gets committed.
-  // Conventional Commits, lowercase type + subject — game_backend's commit-msg hook
-  // (commitlint, @commitlint/config-conventional) rejects anything else.
-  await commitAll(config.gameBackendPath, `docs: add ${parsedFields.gameId} design spec`);
-
-  return {
-    specDocContent: fs.readFileSync(specAbsPath, 'utf8'),
-    specDocPath,
-    reportText: result.finalText,
-  };
 }

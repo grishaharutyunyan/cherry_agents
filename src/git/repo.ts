@@ -79,3 +79,15 @@ export async function commitAll(cwd: string, message: string): Promise<void> {
 export async function pushBranch(cwd: string, branch: string): Promise<void> {
   await git(cwd, ['push', '-u', 'origin', branch]);
 }
+
+/**
+ * Discards all uncommitted changes (tracked and untracked) — used to clean up after a failed
+ * agentic session so a partial, never-committed write never poisons the repo for whatever run
+ * touches it next. Real precedent: a build phase wrote several files then hit a Vertex AI 429 on
+ * a later turn, leaving its branch dirty; an unrelated later run for a different game then hit
+ * "has uncommitted changes" from that leftover, on a branch it had nothing to do with.
+ */
+export async function discardChanges(cwd: string): Promise<void> {
+  await git(cwd, ['checkout', '--', '.']);
+  await git(cwd, ['clean', '-fd']);
+}
