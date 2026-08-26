@@ -25,9 +25,13 @@ async function getCurrentBranch(cwd: string): Promise<string> {
   return git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
 }
 
-async function assertClean(cwd: string): Promise<void> {
+export async function isClean(cwd: string): Promise<boolean> {
   const status = await git(cwd, ['status', '--porcelain']);
-  if (status) {
+  return status.length === 0;
+}
+
+async function assertClean(cwd: string): Promise<void> {
+  if (!(await isClean(cwd))) {
     throw new Error(`${cwd} has uncommitted changes — refusing to switch branches`);
   }
 }

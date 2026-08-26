@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { config } from '../../config';
 import { AiAgentRunParsedFields } from '../../db/types';
-import { discardChanges, ensureBranch, getHeadSha } from '../../git/repo';
+import { discardChanges, ensureBranch, getHeadSha, isClean } from '../../git/repo';
 import { gameBranchName } from '../../orchestrator/naming';
 import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
@@ -37,7 +37,7 @@ Follow this checklist exactly:
 --- adding-a-new-game-backend.md ---
 ${checklist}
 
-You are committing directly to an already-checked-out feature branch — do not create or switch branches yourself. When your implementation is complete: stage and commit your changes via run_shell (git add, then git commit -m "<message>" — this repo's commit-msg hook enforces Conventional Commits: "<type>: <lowercase subject>", type one of build/chore/ci/docs/feat/fix/perf/refactor/revert/style/test, e.g. "feat: add plinko-star game backend module" — a capitalized or sentence-case subject will be rejected), then run npm run lint and npm run build via run_shell and fix any errors they report before finishing. Do not finish with an uncommitted working tree or a failing lint/build.
+You are committing directly to an already-checked-out feature branch — do not create or switch branches yourself. When your implementation is complete: stage and commit your changes via run_shell (git add, then git commit -m "<message>" — this repo's commit-msg hook enforces Conventional Commits: "<type>: <lowercase subject>", type one of build/chore/ci/docs/feat/fix/perf/refactor/revert/style/test, e.g. "feat: add plinko-star game backend module" — a capitalized or sentence-case subject will be rejected), then run npm run lint and npm run build via run_shell and fix any errors they report before finishing. Commit as your LAST substantive action — if you write or fix anything after that commit (e.g. to address a lint/build error), you must commit again before finishing. Do not finish with an uncommitted working tree or a failing lint/build.
 
 When done, reply with plain text (no more tool calls) summarizing the files you created/modified and confirming lint+build passed.`;
 }
@@ -108,6 +108,16 @@ export async function runBackendBuildPhase(
     if (shaAfter === shaBefore) {
       throw new Error(
         `Backend build phase finished without committing any changes to game_backend. ` +
+          `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
+      );
+    }
+    // A commit happened, but the model may have kept writing after it — sha changing only proves
+    // AT LEAST one commit happened, not that everything is committed (real precedent: a frontend
+    // build committed once, then wrote more files, then finished with those still uncommitted).
+    if (!(await isClean(config.gameBackendPath))) {
+      throw new Error(
+        `Backend build phase committed once but left further uncommitted changes afterward — ` +
+          `every write must be committed before finishing, not just the first batch. ` +
           `Model's final text (after ${result.turns} turn(s)): ${result.finalText.slice(0, 2000)}`,
       );
     }
