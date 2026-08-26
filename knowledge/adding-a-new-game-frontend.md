@@ -6,6 +6,24 @@ already defines the WS contract (events/actions/payload shapes) that
 spec's contract, not against the backend code (it may not be merged
 yet).
 
+## Never reuse another game's design
+
+Every game gets its own original visual identity, animation feel, and
+motion — never a re-skin of an existing game with the colors swapped.
+When you reference an existing sibling game's module (per §1 below),
+treat it as a **structural** reference only — file layout, WS hook
+wiring, animation-loop technique, module conventions — never as a
+visual/design reference. Don't reuse another game's layout proportions,
+background treatment, color system, component composition, or exact
+animation constants/cadence; derive palette, motion, and layout from
+*this* game's own theme, per its spec. Structural/technical conventions
+(WS hook shape, file layout, the 6 mandatory UI pieces in §6) should
+still match established patterns — this rule is about visual design and
+feature feel, not architecture. (Real precedent: an earlier game's board
+shipped as a near-copy of an existing sibling's exact animation
+constants and cadence because "match the visual language" was read as
+license to copy it outright — don't repeat that.)
+
 ## 1. File structure
 
 ```

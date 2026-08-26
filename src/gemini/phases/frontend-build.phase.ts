@@ -26,6 +26,8 @@ function buildSystemPrompt(): string {
   const uxTricks = fs.readFileSync(path.join(config.knowledgeDir, 'gambling-ux-tricks.md'), 'utf8');
   return `You implement the Next.js/PixiJS frontend for one new gambling game on the Cherry casino platform, from a spec doc a design agent already wrote. A backend-builder is building the NestJS module in parallel from the same spec, without talking to you — build against the spec's documented WebSocket contract, not against the backend code (it may not exist yet), and don't improvise event/field names.
 
+Every game gets its own original visual identity, animation feel, and motion — never a re-skin of an existing sibling game with the colors swapped. You may read a sibling game as a STRUCTURAL reference only (file layout, WS wiring, animation-loop technique); never copy its layout, palette, or exact animation constants/cadence. See "Never reuse another game's design" in the checklist below for the full rule.
+
 You have four tools: read_file, list_files (whole monorepo, read-only), write_file (scoped only to this game's own directory under game-frontend/games/ and its registration page under game-frontend/app/games/), and run_shell (cwd pinned to game-frontend; allowed: git status/diff/add/commit, npm run lint, npm run build — not a general shell, no pipes/redirects/globs).
 
 Follow this checklist exactly:
