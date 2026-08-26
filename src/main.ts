@@ -1,5 +1,6 @@
 import { config } from './config';
 import { pool } from './db/client';
+import { runMigrations } from './db/migrate';
 import { claimNextPendingRun } from './db/runs.repo';
 import { runOnePhaseStep } from './orchestrator/orchestrator';
 
@@ -20,6 +21,8 @@ async function main(): Promise<void> {
     void config.geminiApiKey;
   }
   void config.dbUri;
+
+  await runMigrations();
 
   console.log(
     `[agents] worker starting as "${config.workerId}", polling every ${config.pollIntervalMs}ms ` +

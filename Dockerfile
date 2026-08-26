@@ -24,6 +24,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
 COPY knowledge ./knowledge
+COPY db/migrations ./db/migrations
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 

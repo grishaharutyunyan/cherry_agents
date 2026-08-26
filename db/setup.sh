@@ -123,15 +123,32 @@ CREATE TABLE IF NOT EXISTS ai_agent_run_events (
 CREATE INDEX IF NOT EXISTS "IDX_ai_agent_runs_phase_locked" ON ai_agent_runs ("phase", "lockedUntil");
 CREATE INDEX IF NOT EXISTS "IDX_ai_agent_run_events_run_created" ON ai_agent_run_events ("runId", "createdAt");
 
+-- Tracks which db/migrations/*.sql files have run (see src/db/migrate.ts, which runs at every
+-- container boot from here on) — created here too so a fresh install starts with the same
+-- objects an existing, already-migrated database would have.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename varchar PRIMARY KEY,
+  "appliedAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- The statements above ran as the superuser you're connected as, not as
 -- cherry_agents_app — being the database's OWNER does not automatically grant
--- rights on tables someone else created inside it. Fix that explicitly and
+-- rights on tables/types someone else created inside it. Fix that explicitly and
 -- unconditionally (safe to re-run, no-op once already correct) rather than
--- relying on cherry_agents_app happening to be the one that ran CREATE TABLE.
+-- relying on cherry_agents_app happening to be the one that ran CREATE TABLE/TYPE.
+-- Also grant CREATE on the public schema — needed on Postgres 15+, where a
+-- non-owner role has no schema-level CREATE by default — so cherry_agents_app can
+-- run future migrations (new tables/types) fully on its own, no superuser needed
+-- ever again after this one-time bootstrap.
+GRANT CREATE ON SCHEMA public TO cherry_agents_app;
 ALTER TABLE ai_agent_runs OWNER TO cherry_agents_app;
 ALTER TABLE ai_agent_run_events OWNER TO cherry_agents_app;
+ALTER TABLE schema_migrations OWNER TO cherry_agents_app;
 ALTER SEQUENCE ai_agent_runs_id_seq OWNER TO cherry_agents_app;
 ALTER SEQUENCE ai_agent_run_events_id_seq OWNER TO cherry_agents_app;
+ALTER TYPE ai_agent_runs_phase_enum OWNER TO cherry_agents_app;
+ALTER TYPE ai_agent_runs_lastqafailureroute_enum OWNER TO cherry_agents_app;
+ALTER TYPE ai_agent_run_events_eventtype_enum OWNER TO cherry_agents_app;
 SQL
 
 echo "==> Verifying: connecting AS cherry_agents_app (not the superuser) and actually reading/writing, not just listing tables"

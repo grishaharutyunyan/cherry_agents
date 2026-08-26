@@ -144,18 +144,35 @@ permissions one — Postgres can't query across databases in one connection
 user/wallet/transaction data even in principle, regardless of any grant
 mistake down the line.
 
-Run `npm run db:setup` once per Postgres instance (needs a superuser
-connection via `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`, plus
+Run `npm run db:setup` **once** per Postgres instance, ever (needs a
+superuser connection via `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`, plus
 `CHERRY_AGENTS_DB_PASSWORD` for the new role — see `db/setup.sh` header) —
 it creates a `cherry_agents_app` role, a `cherry_agents` database owned
-outright by that role, and the two tables in it, then verifies by
-connecting AS that role (not the superuser) and listing them. Idempotent —
-safe to re-run; it skips role/database creation if they already exist and
-uses `CREATE TABLE/TYPE/INDEX IF NOT EXISTS` for the schema.
+outright by that role, the initial schema, and transfers ownership of
+every table/type it created (not just the database itself — see the
+comment in `db/setup.sh`) to `cherry_agents_app`, including `GRANT CREATE
+ON SCHEMA public` (needed on Postgres 15+, where a non-owner role gets no
+schema-level `CREATE` by default). That ownership transfer is the point
+past which **no schema change ever needs superuser access again**.
+
+**Every schema change after that first bootstrap is a migration, not a
+manual psql command.** `src/db/migrate.ts` runs at every container boot
+(`main.ts`, before the poll loop starts), applying any `db/migrations/*.sql`
+file not yet recorded in the `schema_migrations` table, in filename order —
+same idea as `cherry_backend`'s `DB_MAIN_RUN_MIGRATIONS` self-migrating at
+boot. To change the schema: add a new numbered file under `db/migrations/`
+(write it idempotently — `IF NOT EXISTS` / `ADD VALUE IF NOT EXISTS` /
+etc. — it's not run inside a transaction, since `ALTER TYPE ... ADD VALUE`
+has version-dependent restrictions inside one), commit it, deploy — that's
+the whole process. `db/setup.sh` itself stays idempotent and safe to re-run
+too (e.g. onto a database that predates this migration system), but you
+should no longer need to.
+
 `cherry_admin_backend`'s `AiAgentsModule` connects to this same database
 through its own separate `AgentsDatabase` TypeORM connection
-(`DB_AGENTS_URI` in its own env) — it's the only other thing that ever
-touches these tables.
+(`DB_AGENTS_URI` in its own env, `DB_AGENTS_SYNCHRONIZE` left off) — it's
+the only other thing that ever touches these tables, and it never runs
+migrations itself; `cherry_agents` owns this schema exclusively.
 
 Verified locally end-to-end: the app's own `db/client.ts`/`db/runs.repo.ts`
 connects and queries successfully through the restricted role: reads,
