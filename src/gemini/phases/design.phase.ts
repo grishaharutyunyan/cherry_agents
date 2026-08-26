@@ -11,7 +11,7 @@ import { AgentEventHandler } from '../types';
 
 export interface DesignPhaseResult {
   specDocContent: string;
-  /** Repo-relative path (from the monorepo root), e.g. "game_backend/.claude/handoffs/HANDOFF_X_SPEC.md" */
+  /** Repo-relative path (from the monorepo root), e.g. "game_backend/docs/ai-agent-handoffs/HANDOFF_X_SPEC.md" */
   specDocPath: string;
   reportText: string;
 }
@@ -20,9 +20,9 @@ function buildSystemPrompt(): string {
   const knowledge = fs.readFileSync(path.join(config.knowledgeDir, 'gambling-math-rtp.md'), 'utf8');
   return `You design the math for one new gambling game on the Cherry casino platform. You do not write game code — your only deliverable is a spec document, written via the write_file tool. A backend-builder and a frontend-builder will build from what you write, in parallel, without talking to each other — so be exact about names, numbers, and event shapes.
 
-You have three tools: read_file, list_files (both scoped to the whole monorepo, read-only), and write_file (scoped only to the game_backend/.claude/handoffs/ directory — you cannot write anywhere else).
+You have three tools: read_file, list_files (both scoped to the whole monorepo, read-only), and write_file (scoped only to the game_backend/docs/ai-agent-handoffs/ directory — you cannot write anywhere else).
 
-Read docs/knowledge/gambling-math-rtp.md (its full content is included below) — the house's provably-fair and RTP conventions. Follow them; don't invent a different HMAC scheme or RTP shape. You may also use read_file/list_files to look at an existing game's implementation under game_backend/src/games/ for the closest archetype (plinko→ladder/bitstream, mines→reveal/shuffle, dice-wheel→threshold, keno→hypergeometric draw, hilo→card sequence) and at game_backend/.claude/handoffs/HANDOFF_PLINKO.md as a reference for the level of detail and format your own spec should have.
+Read docs/knowledge/gambling-math-rtp.md (its full content is included below) — the house's provably-fair and RTP conventions. Follow them; don't invent a different HMAC scheme or RTP shape. You may also use read_file/list_files to look at an existing game's implementation under game_backend/src/games/ for the closest archetype (plinko→ladder/bitstream, mines→reveal/shuffle, dice-wheel→threshold, keno→hypergeometric draw, hilo→card sequence) and at game_backend/.claude/handoffs/HANDOFF_PLINKO.md as a reference for the level of detail and format your own spec should have (read-only reference — that directory belongs to a different pipeline, don't write there).
 
 Your spec document must have these sections, in this order:
 1. Game ID & name.
@@ -73,9 +73,9 @@ export async function runDesignPhase(
   approvalFeedback: string | null,
   onEvent: AgentEventHandler,
 ): Promise<DesignPhaseResult> {
-  const handoffsDir = path.join(config.gameBackendPath, '.claude', 'handoffs');
-  const specDocPath = `game_backend/.claude/handoffs/HANDOFF_${parsedFields.fileSlug}_SPEC.md`;
-  const specAbsPath = path.join(config.gameBackendPath, '.claude', 'handoffs', `HANDOFF_${parsedFields.fileSlug}_SPEC.md`);
+  const handoffsDir = path.join(config.gameBackendPath, 'docs', 'ai-agent-handoffs');
+  const specDocPath = `game_backend/docs/ai-agent-handoffs/HANDOFF_${parsedFields.fileSlug}_SPEC.md`;
+  const specAbsPath = path.join(config.gameBackendPath, 'docs', 'ai-agent-handoffs', `HANDOFF_${parsedFields.fileSlug}_SPEC.md`);
 
   const result = await runAgenticSession({
     model: config.models.design,
