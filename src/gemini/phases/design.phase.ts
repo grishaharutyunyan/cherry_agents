@@ -119,7 +119,9 @@ export async function runDesignPhase(
   // Commit deterministically here rather than relying on the model to do it — this is what
   // keeps the working tree clean for the building phase's own ensureBranch()/commit, and there's
   // nothing design-specific for the model to decide about how this one file gets committed.
-  await commitAll(config.gameBackendPath, `Design: ${parsedFields.gameName} spec doc`);
+  // Conventional Commits, lowercase type + subject — game_backend's commit-msg hook
+  // (commitlint, @commitlint/config-conventional) rejects anything else.
+  await commitAll(config.gameBackendPath, `docs: add ${parsedFields.gameId} design spec`);
 
   return {
     specDocContent: fs.readFileSync(specAbsPath, 'utf8'),

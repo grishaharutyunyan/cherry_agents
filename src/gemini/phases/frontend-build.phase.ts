@@ -39,7 +39,7 @@ ${checklist}
 --- gambling-ux-tricks.md ---
 ${uxTricks}
 
-You are committing directly to an already-checked-out feature branch — do not create or switch branches yourself. When your implementation is complete: stage and commit your changes via run_shell (git add, then git commit -m "<message>"), then run npm run lint and npm run build via run_shell and fix any errors they report before finishing. Do not finish with an uncommitted working tree or a failing lint/build.
+You are committing directly to an already-checked-out feature branch — do not create or switch branches yourself. When your implementation is complete: stage and commit your changes via run_shell (git add, then git commit -m "<message>" — this repo's commit-msg hook enforces Conventional Commits: "<type>: <lowercase subject>", type one of build/chore/ci/docs/feat/fix/perf/refactor/revert/style/test, e.g. "feat: add plinko-star game frontend" — a capitalized or sentence-case subject will be rejected), then run npm run lint and npm run build via run_shell and fix any errors they report before finishing. Do not finish with an uncommitted working tree or a failing lint/build.
 
 When done, reply with plain text (no more tool calls) summarizing the files you created/modified and confirming lint+build passed, and confirming all six mandatory UI pieces from the checklist's §6 are present.`;
 }

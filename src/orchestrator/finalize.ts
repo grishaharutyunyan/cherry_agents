@@ -133,7 +133,9 @@ export async function runFinalizePhase(
   fs.writeFileSync(path.join(handoffsDir, `HANDOFF_${parsedFields.fileSlug}_THUMBNAIL_PROMPT.md`), thumbnailPromptContent, 'utf8');
   fs.writeFileSync(path.join(handoffsDir, `HANDOFF_${parsedFields.fileSlug}_ADMIN_PAYLOAD.md`), adminPayloadContent, 'utf8');
 
-  await commitAll(config.gameBackendPath, `Finalize ${parsedFields.gameName}: games.json + handoff docs`);
+  // Conventional Commits, lowercase type + subject — game_backend's commit-msg hook
+  // (commitlint, @commitlint/config-conventional) rejects anything else.
+  await commitAll(config.gameBackendPath, `feat: add ${parsedFields.gameId} to games.json + handoff docs`);
   await pushBranch(config.gameBackendPath, backendBranch);
   await pushBranch(config.gameFrontendPath, frontendBranch);
 
