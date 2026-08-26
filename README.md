@@ -11,15 +11,38 @@ It is a second, independent pipeline alongside the existing Claude-Code-driven
 `/create-game` — it does not read, write, or depend on anything under
 `.claude/agents/` or `.claude/commands/create-game.md`.
 
-## Current status (M2)
+## Current status (M2–M5 implemented)
 
-Implemented: prompt parsing (structured Gemini call) and the design phase
-(real agentic session against `knowledge/gambling-math-rtp.md`, writing a
-real spec doc into `game_backend/.claude/handoffs/`). The `building` phase is
-a **deterministic stub** that jumps straight to `done` — it exists only to
-prove the `awaiting_approval` → admin-approves → unparked loop works
-end-to-end. Real backend/frontend builder agents land in M3, QA + retry
-routing in M4, finalize/push/PR automation in M5.
+- **M2** — prompt parsing (structured Gemini call) + design phase (real
+  agentic session against `knowledge/gambling-math-rtp.md`, writing a real
+  spec doc into `game_backend/docs/ai-agent-handoffs/`) + the admin
+  approval gate.
+- **M3** — real backend + frontend builder agents
+  (`gemini/phases/backend-build.phase.ts` /
+  `gemini/phases/frontend-build.phase.ts`): each checks out/creates a
+  `CHE-<GAMEID>` branch in its own repo (`git/repo.ts`), runs an agentic
+  session scoped to that game's own directory (`write_file`'s
+  `allowedRoots`) plus an allowlisted `run_shell` (git add/commit, npm run
+  lint, npm run build — never a general shell), and commits. `building`
+  dispatches both in parallel (`Promise.allSettled`) — never proceeds to QA
+  on half a build.
+- **M4** — QA agent (`gemini/phases/qa.phase.ts`): read-only + a
+  `run_simulation` tool that writes/runs/deletes a one-off Monte Carlo
+  script against the real shipped `game_backend` code
+  (`gemini/tools/run-simulation.tool.ts`), reports a structured pass/fail
+  via a "terminal tool" call (`report_qa_result` —
+  `gemini/tools/report-result.tool.ts`, `client.ts`'s `terminalTool`
+  option) rather than free text. A failing check's `routeHint` sends the
+  run to `retry_design` or `retry_build`; capped at 2 retries
+  (`MAX_RETRIES` in `orchestrator.ts`), same as the Claude Code pipeline.
+- **M5** — `orchestrator/finalize.ts`: deterministic, no Gemini call.
+  Appends `game_backend/docs/games.json`, writes the 3 handoff docs into
+  `game_backend/docs/ai-agent-handoffs/`, commits, pushes both branches,
+  and opens both PRs via `gh` (`git/pr.ts`'s `ensurePr` — idempotent, reuses
+  an existing PR on a retry instead of erroring).
+
+See "Git & GitHub access (M3/M5)" below for what has to be provisioned on
+the deploy target before build/finalize can actually push/PR for real.
 
 ## Running locally
 
@@ -71,16 +94,45 @@ match this codebase's actual shape (polling worker, no HTTP server, plain
 **Manual prerequisites — not something this codebase can provision for you:**
 - Push this repo to GitHub and set up its own CI image build to
   `ghcr.io/grishaharutyunyan/cherry_agents` (mirroring the other services).
-- `GEMINI_API_KEY` — generate it yourself from your GCP project.
+- `GEMINI_API_KEY` (or Vertex AI — see below) — generate it yourself from
+  your GCP project.
 - Run `npm run db:setup` once against each Postgres instance (local, then
   staging) — see "Database" below.
-- Once M3 (real builder agents that commit) and M5 (push + `gh pr create`)
-  land, the container will additionally need: `git`/`gh` installed, a
-  non-interactive deploy credential (SSH key or PAT) for `game_backend` and
-  `game-frontend` with push access, and either a persistent volume with
-  working clones of both repos or an entrypoint that clones them fresh on
-  container start. None of that is wired up yet — M2's design phase only
-  reads/writes local files, it never touches git.
+- See "Git & GitHub access (M3/M5)" directly below — a PAT, and real working
+  clones of `game_backend`/`game-frontend` (with `npm install` already run
+  in each, so `npm run lint`/`npm run build`/`ts-node` work) at whatever
+  host paths get bind-mounted to `GAME_BACKEND_PATH`/`GAME_FRONTEND_PATH`.
+
+## Git & GitHub access (M3/M5)
+
+The build/retry phases commit to `game_backend`/`game-frontend`, and
+finalize pushes + opens PRs — this needs real credentials on the deploy
+target, provisioned once, manually:
+
+1. **Working clones with dependencies installed.** `GAME_BACKEND_PATH` /
+   `GAME_FRONTEND_PATH` (bind-mounted into the container — see
+   `docker-compose.staging.yml`'s `cherry_agents` service) must point at
+   real `git clone`s of `game_backend`/`game-frontend` on the host, each
+   with `npm install` already run — `npm run lint`/`npm run build` (in
+   every phase) and `ts-node` (QA's `run_simulation`) all need
+   `node_modules` to exist. These are **separate checkouts from whatever
+   the actual running `game_backend`/`game-frontend` services deploy
+   from** (those pull pre-built `ghcr.io` images, not this bind-mounted
+   source) — this pipeline needs its own dedicated working copies.
+2. **A GitHub PAT.** Generate a fine-grained token scoped to just the
+   `game_backend` and `game-frontend` repos, with **Contents**
+   (read/write) and **Pull requests** (read/write) permissions. Set it as
+   `GH_TOKEN` in the env file (`envs/cherry_agents/.env.staging` on the
+   VPS) — **never paste the token itself in chat/logs**, set it directly
+   on the deploy target.
+3. That's it — `docker-entrypoint.sh` does the rest at container start:
+   configures `git safe.directory` for both bind-mounted paths (needed
+   since the container's user likely differs from the host checkout's
+   owner), sets a `cherry-agents-bot` git identity (override via
+   `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`), and — when `GH_TOKEN` is set —
+   rewrites `git@github.com:` remotes to `https://github.com/` and runs
+   `gh auth setup-git` so the same PAT covers both `git push` and
+   `gh pr create` (no SSH key needed).
 
 ## Database
 

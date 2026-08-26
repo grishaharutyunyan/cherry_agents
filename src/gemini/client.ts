@@ -28,12 +28,21 @@ export interface AgenticSessionParams {
   initialUserMessage: string;
   maxTurns: number;
   onEvent?: AgentEventHandler;
+  /**
+   * Name of a tool (typically one built with makeReportResultTool) whose call ends the session
+   * immediately — its args are returned as `structuredResult` instead of being executed and fed
+   * back. Use this when a phase's final answer needs to be structured data (e.g. QA's pass/fail
+   * report) rather than free text.
+   */
+  terminalTool?: string;
 }
 
 export interface AgenticSessionResult {
   finalText: string;
   turns: number;
   stoppedReason: 'done' | 'max_turns_exceeded';
+  /** Set only when the session ended via a call to `terminalTool`. */
+  structuredResult?: Record<string, unknown>;
 }
 
 /**
@@ -66,6 +75,16 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
     const calls = response.functionCalls;
     if (!calls || calls.length === 0) {
       return { finalText: response.text ?? '', turns: turn + 1, stoppedReason: 'done' };
+    }
+
+    const terminalCall = params.terminalTool ? calls.find((c) => c.name === params.terminalTool) : undefined;
+    if (terminalCall) {
+      return {
+        finalText: response.text ?? '',
+        turns: turn + 1,
+        stoppedReason: 'done',
+        structuredResult: (terminalCall.args ?? {}) as Record<string, unknown>,
+      };
     }
 
     await params.onEvent?.({ type: 'gemini_message', detail: { turn, text: response.text ?? '' } });
