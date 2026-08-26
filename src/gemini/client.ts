@@ -35,6 +35,16 @@ export interface AgenticSessionParams {
    * report) rather than free text.
    */
   terminalTool?: string;
+  /**
+   * If the session tries to finish (no function calls) without ever having called this tool,
+   * one nudge — injected as a new user turn instead of accepting the finish — gets the model to
+   * reconsider before the session ends for good (still bounded by maxTurns). Only nudges once,
+   * to avoid an infinite prompt loop. This is a soft nudge, not the correctness guarantee — a
+   * build phase finishing without ever calling run_shell (real precedent: a frontend build wrote
+   * 18 files and finished without a single commit, 2026-08-27) is exactly the case this targets,
+   * but the real safety net stays each build phase's own git-sha-diff check after the session.
+   */
+  requireToolCall?: { toolName: string; nudgeMessage: string };
 }
 
 export interface AgenticSessionResult {
@@ -55,6 +65,8 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
   const ai = getClient();
   const toolMap = new Map(params.tools.map((tool) => [tool.declaration.name ?? '', tool]));
   const contents: Content[] = [{ role: 'user', parts: [{ text: params.initialUserMessage }] }];
+  const calledToolNames = new Set<string>();
+  let nudged = false;
 
   for (let turn = 0; turn < params.maxTurns; turn++) {
     const response = await ai.models.generateContent({
@@ -74,6 +86,12 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
 
     const calls = response.functionCalls;
     if (!calls || calls.length === 0) {
+      const required = params.requireToolCall;
+      if (required && !calledToolNames.has(required.toolName) && !nudged) {
+        nudged = true;
+        contents.push({ role: 'user', parts: [{ text: required.nudgeMessage }] });
+        continue;
+      }
       return { finalText: response.text ?? '', turns: turn + 1, stoppedReason: 'done' };
     }
 
@@ -93,6 +111,7 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
     for (const call of calls) {
       const name = call.name ?? '';
       const args = call.args ?? {};
+      calledToolNames.add(name);
       await params.onEvent?.({ type: 'tool_call', detail: { tool: name, args } });
 
       let result: unknown;

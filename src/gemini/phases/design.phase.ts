@@ -3,6 +3,8 @@ import * as path from 'path';
 
 import { config } from '../../config';
 import { AiAgentRunParsedFields } from '../../db/types';
+import { commitAll, ensureBranch } from '../../git/repo';
+import { gameBranchName } from '../../orchestrator/naming';
 import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
 import { makeReadFileTool } from '../tools/read-file.tool';
@@ -77,6 +79,11 @@ export async function runDesignPhase(
   const specDocPath = `game_backend/docs/ai-agent-handoffs/HANDOFF_${parsedFields.fileSlug}_SPEC.md`;
   const specAbsPath = path.join(config.gameBackendPath, 'docs', 'ai-agent-handoffs', `HANDOFF_${parsedFields.fileSlug}_SPEC.md`);
 
+  // Create (or re-checkout, on a revision) the feature branch BEFORE writing anything — the spec
+  // write must never land on dev's working tree, since that's what left dev dirty and made the
+  // building phase's own ensureBranch() refuse to switch branches on the very next run.
+  await ensureBranch(config.gameBackendPath, gameBranchName(parsedFields.gameId));
+
   const result = await runAgenticSession({
     model: config.models.design,
     systemPrompt: buildSystemPrompt(),
@@ -96,6 +103,11 @@ export async function runDesignPhase(
   if (!fs.existsSync(specAbsPath)) {
     throw new Error(`Design phase finished but did not write the expected spec file: ${specDocPath}`);
   }
+
+  // Commit deterministically here rather than relying on the model to do it — this is what
+  // keeps the working tree clean for the building phase's own ensureBranch()/commit, and there's
+  // nothing design-specific for the model to decide about how this one file gets committed.
+  await commitAll(config.gameBackendPath, `Design: ${parsedFields.gameName} spec doc`);
 
   return {
     specDocContent: fs.readFileSync(specAbsPath, 'utf8'),

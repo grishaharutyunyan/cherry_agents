@@ -4,6 +4,7 @@ import * as path from 'path';
 import { config } from '../../config';
 import { AiAgentRunParsedFields } from '../../db/types';
 import { ensureBranch, getHeadSha } from '../../git/repo';
+import { gameBranchName } from '../../orchestrator/naming';
 import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
 import { makeReadFileTool } from '../tools/read-file.tool';
@@ -72,7 +73,7 @@ export async function runFrontendBuildPhase(
   retryFeedback: string | null,
   onEvent: AgentEventHandler,
 ): Promise<BuildPhaseResult> {
-  const branch = `CHE-${parsedFields.gameId.toUpperCase()}`;
+  const branch = gameBranchName(parsedFields.gameId);
   await ensureBranch(config.gameFrontendPath, branch);
   const shaBefore = await getHeadSha(config.gameFrontendPath);
 
@@ -91,6 +92,13 @@ export async function runFrontendBuildPhase(
     initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
     maxTurns: config.maxTurnsPerPhase,
     onEvent,
+    requireToolCall: {
+      toolName: 'run_shell',
+      nudgeMessage:
+        'You finished without ever calling run_shell — nothing has been committed yet. Run ' +
+        'run_shell with command "git" args ["add","-A"], then command "git" args ["commit","-m","<message>"], ' +
+        'then npm run lint and npm run build via run_shell (fix any errors they report), and only then finish.',
+    },
   });
 
   if (result.stoppedReason === 'max_turns_exceeded') {
