@@ -21,6 +21,35 @@ export function getClient(): GoogleGenAI {
   return client;
 }
 
+function isRateLimitError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || message.includes(' 429 ');
+}
+
+/**
+ * Real-world precedent for why this exists: building phase dispatches backend + frontend
+ * sessions in parallel, each making several calls per turn — that's enough to trip Vertex AI's
+ * per-project rate limit outright (2026-08-27, RESOURCE_EXHAUSTED on the very first call of both
+ * sessions at once). Retries only 429/RESOURCE_EXHAUSTED with exponential backoff; anything else
+ * fails immediately, same as before. Bounded to stay well under LOCK_TTL_SECONDS (120s default).
+ */
+async function generateContentWithRetry(
+  ai: GoogleGenAI,
+  args: Parameters<GoogleGenAI['models']['generateContent']>[0],
+  maxRetries = 4,
+): Promise<Awaited<ReturnType<GoogleGenAI['models']['generateContent']>>> {
+  let delayMs = 3000;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ai.models.generateContent(args);
+    } catch (err) {
+      if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 30000);
+    }
+  }
+}
+
 export interface AgenticSessionParams {
   model: string;
   systemPrompt: string;
@@ -69,7 +98,7 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
   let nudged = false;
 
   for (let turn = 0; turn < params.maxTurns; turn++) {
-    const response = await ai.models.generateContent({
+    const response = await generateContentWithRetry(ai, {
       model: params.model,
       contents,
       config: {
