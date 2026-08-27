@@ -231,10 +231,18 @@ billing. This is a real authentication switch, not just a config flag:
    ```
    GOOGLE_GENAI_USE_VERTEXAI=true
    GOOGLE_CLOUD_PROJECT=<your-gcp-project-id>
-   GOOGLE_CLOUD_LOCATION=us-central1
+   GOOGLE_CLOUD_LOCATION=global
    GOOGLE_APPLICATION_CREDENTIALS=/path/to/the/key.json
    ```
    Leave `GEMINI_API_KEY` blank — it's not read in this mode.
+
+   **`GOOGLE_CLOUD_LOCATION` must be `global`, not a regional location like
+   `us-central1`.** Every Gemini 3.x model (3.6-flash, 3.7-flash,
+   3.1-pro-preview — all of them) is global/multi-region only on Vertex AI;
+   a regional location 404s with "Publisher model ... was not found" on
+   every single one of them, regardless of which model you pick (confirmed
+   live, 2026-08-27 — this cost real debugging time chasing what looked
+   like a bad model name before the actual cause, the location, was found).
 5. In Docker, the key file has to be **bind-mounted into the container** —
    `GOOGLE_APPLICATION_CREDENTIALS` is a path, and it has to resolve inside
    the container's filesystem, not the host's. See
