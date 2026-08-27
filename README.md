@@ -59,6 +59,23 @@ and `<monorepo root>/game-frontend` — on this dev machine that's already your
 existing sibling checkouts, so you usually don't need to set them explicitly
 for local runs.
 
+## Model configuration
+
+Per-phase Gemini model selection (`parse`/`design`/`build`/`qa`) lives in the
+`ai_agent_model_config` table (`db/migrations/0002_model_config.sql`,
+`src/db/model-config.repo.ts`'s `getModelForPhase`), not env vars — read
+fresh once per phase invocation, no caching. To change a phase's model:
+
+```sql
+UPDATE ai_agent_model_config SET model = 'gemini-3.1-pro-preview' WHERE phase = 'design';
+```
+
+Takes effect on the next run to reach that phase — no redeploy or restart.
+A phase with no row throws immediately rather than silently falling back to
+some hardcoded default (this replaced `GEMINI_MODEL_PARSE`/`DESIGN`/`BUILD`/
+`QA` env vars, which had exactly that failure mode: an env override on the
+deploy target silently kept beating a code-level default change).
+
 ## Knowledge docs
 
 `knowledge/*.md` are **vendored copies** of the proven docs at

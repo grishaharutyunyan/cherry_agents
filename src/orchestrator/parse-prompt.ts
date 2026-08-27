@@ -1,5 +1,5 @@
-import { config } from '../config';
 import { AiAgentRunParsedFields } from '../db/types';
+import { getModelForPhase } from '../db/model-config.repo';
 import { getClient } from '../gemini/client';
 
 const PARSED_FIELDS_SCHEMA = {
@@ -45,9 +45,10 @@ export async function parsePrompt(
   overrides: Record<string, unknown> | null,
 ): Promise<AiAgentRunParsedFields | null> {
   const ai = getClient();
+  const model = await getModelForPhase('parse');
 
   const response = await ai.models.generateContent({
-    model: config.models.parse,
+    model,
     contents: [
       {
         role: 'user',

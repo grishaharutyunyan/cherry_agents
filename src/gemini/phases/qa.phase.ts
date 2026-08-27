@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { config } from '../../config';
+import { getModelForPhase } from '../../db/model-config.repo';
 import { AiAgentRunParsedFields, AiAgentRunQaCheck } from '../../db/types';
 import { checkoutBranch } from '../../git/repo';
 import { runAgenticSession } from '../client';
@@ -88,8 +89,9 @@ export async function runQaPhase(
   await checkoutBranch(config.gameBackendPath, backendBranch);
   await checkoutBranch(config.gameFrontendPath, frontendBranch);
 
+  const model = await getModelForPhase('qa');
   const result = await runAgenticSession({
-    model: config.models.qa,
+    model,
     systemPrompt: buildSystemPrompt(),
     tools: [
       makeReadFileTool(config.monorepoRoot),

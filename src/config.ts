@@ -34,22 +34,11 @@ export const config = {
   get geminiApiKey(): string {
     return required('GEMINI_API_KEY');
   },
-  // gemini-2.5-* was retired for new API keys (confirmed live, 2026-08-26 — a
-  // 404 with "no longer available to new users... use models/gemini-3.6-flash").
-  // gemini-3.6-flash was itself superseded by gemini-3.7-flash (released 2026-08,
-  // confirmed via ai.google.dev's changelog, 2026-08-27) — bumped every phase's
-  // default to it. Pro-tier for design/build (gemini-3.1-pro-preview, confirmed same
-  // date) was considered and deliberately deferred: it's still a preview-tier model,
-  // and this pipeline already fights Vertex rate limits on flash alone (see
-  // client.ts's generateContentWithRetry and building's sequential-not-parallel
-  // dispatch) — swap to it via a GEMINI_MODEL_DESIGN/GEMINI_MODEL_BUILD env override
-  // if reasoning quality turns out to be the bottleneck, not rate limits.
-  models: {
-    parse: process.env.GEMINI_MODEL_PARSE ?? 'gemini-3.7-flash',
-    design: process.env.GEMINI_MODEL_DESIGN ?? 'gemini-3.7-flash',
-    build: process.env.GEMINI_MODEL_BUILD ?? 'gemini-3.7-flash',
-    qa: process.env.GEMINI_MODEL_QA ?? 'gemini-3.7-flash',
-  },
+  // Per-phase model selection (parse/design/build/qa) moved out of env vars and into the
+  // ai_agent_model_config DB table (see db/model-config.repo.ts's getModelForPhase) — an env
+  // var required a redeploy AND could silently diverge from this file's own default (real
+  // precedent: gemini-3.6-flash's staging env override kept overriding the code default after
+  // it was bumped to gemini-3.7-flash here, 2026-08-27). The DB is now the only source of truth.
 
   /**
    * Connects to a database dedicated solely to ai_agent_runs/ai_agent_run_events —

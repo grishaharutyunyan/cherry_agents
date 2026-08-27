@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { config } from '../../config';
+import { getModelForPhase } from '../../db/model-config.repo';
 import { AiAgentRunParsedFields } from '../../db/types';
 import { discardChanges, ensureBranch, getHeadSha, isClean } from '../../git/repo';
 import { gameBranchName } from '../../orchestrator/naming';
@@ -81,8 +82,9 @@ export async function runFrontendBuildPhase(
   const pageFile = path.join(config.gameFrontendPath, 'app', 'games', parsedFields.gameId, 'page.tsx');
 
   try {
+    const model = await getModelForPhase('build');
     const result = await runAgenticSession({
-      model: config.models.build,
+      model,
       systemPrompt: buildSystemPrompt(),
       tools: [
         makeReadFileTool(config.monorepoRoot),

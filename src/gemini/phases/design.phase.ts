@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { config } from '../../config';
+import { getModelForPhase } from '../../db/model-config.repo';
 import { AiAgentRunParsedFields } from '../../db/types';
 import { commitAll, discardChanges, ensureBranch } from '../../git/repo';
 import { gameBranchName } from '../../orchestrator/naming';
@@ -85,8 +86,9 @@ export async function runDesignPhase(
   await ensureBranch(config.gameBackendPath, gameBranchName(parsedFields.gameId));
 
   try {
+    const model = await getModelForPhase('design');
     const result = await runAgenticSession({
-      model: config.models.design,
+      model,
       systemPrompt: buildSystemPrompt(),
       tools: [
         makeReadFileTool(config.monorepoRoot),
