@@ -1,31 +1,35 @@
 import { Content, GoogleGenAI } from '@google/genai';
 
 import { config } from '../config';
+import { getSetting } from '../db/settings.repo';
 import { AgentEventHandler, AgentTool } from './types';
 
-let client: GoogleGenAI | null = null;
-
-function createClient(): GoogleGenAI {
-  return config.useVertexAI ? new GoogleGenAI({}) : new GoogleGenAI({ apiKey: config.geminiApiKey });
+/**
+ * `location` is passed explicitly (read from the DB, not GOOGLE_CLOUD_LOCATION) rather than
+ * left to the SDK's own env-var auto-detection — real precedent: a hardcoded regional
+ * GOOGLE_CLOUD_LOCATION (us-central1) 404s on every single Gemini 3.x model, since they're
+ * global/multi-region only on Vertex AI (2026-08-27) — fixing that needed a VPS env-var edit +
+ * container restart. DB-backed like model-config.repo.ts's getModelForPhase, so this class of
+ * fix no longer needs either.
+ */
+async function createClient(): Promise<GoogleGenAI> {
+  if (!config.useVertexAI) {
+    return new GoogleGenAI({ apiKey: config.geminiApiKey });
+  }
+  const location = await getSetting('googleCloudLocation');
+  return new GoogleGenAI({ vertexai: true, project: process.env.GOOGLE_CLOUD_PROJECT, location });
 }
 
 /**
- * Developer API key mode (default) vs Vertex AI mode (draws from GCP billing/
- * credits instead of the Gemini API's own billing) — the SDK auto-detects Vertex
- * mode from GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION
- * env vars when constructed with no explicit options, and authenticates via
- * standard GCP Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS
- * pointing at a service account key, typically) rather than an API key at all —
- * so an apiKey must NOT be passed here in that mode. See config.useVertexAI.
- *
- * Cached singleton — used for one-shot calls (parse-prompt.ts) where there's nothing to retry.
- * generateContentWithRetry below deliberately does NOT use this cached instance; see its comment.
+ * Used for one-shot calls (parse-prompt.ts) where there's nothing to retry.
+ * generateContentWithRetry below deliberately builds its own fresh client per attempt; see its
+ * comment. No caching here either — a cached client would silently keep using whatever location
+ * was current at cache time, ignoring a later DB change until process restart, exactly the
+ * stale-config failure mode getSetting is meant to get away from. Construction is cheap (no
+ * network call), so this costs nothing.
  */
-export function getClient(): GoogleGenAI {
-  if (!client) {
-    client = createClient();
-  }
-  return client;
+export async function getClient(): Promise<GoogleGenAI> {
+  return createClient();
 }
 
 function isRateLimitError(err: unknown): boolean {
@@ -40,8 +44,8 @@ function isRateLimitError(err: unknown): boolean {
  * sessions at once). Retries only 429/RESOURCE_EXHAUSTED with exponential backoff; anything else
  * fails immediately, same as before. Bounded to stay well under LOCK_TTL_SECONDS (120s default).
  *
- * Deliberately builds a BRAND NEW client for every single attempt (never getClient()'s cached
- * singleton, never reuses one client instance across retries) — real precedent: with
+ * Deliberately builds a BRAND NEW client for every single attempt (never reuses one client
+ * instance across retries) — real precedent: with
  * structuredClone(args) already ruling out request-object mutation, a design-phase call still
  * failed with a client-side "Mixing Content and Parts" validation error every time, consistently
  * ~40s in (matching this backoff schedule almost exactly), and this bug only ever appeared after
@@ -57,7 +61,8 @@ async function generateContentWithRetry(
   let delayMs = 3000;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await createClient().models.generateContent(structuredClone(args));
+      const client = await createClient();
+      return await client.models.generateContent(structuredClone(args));
     } catch (err) {
       if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
       await new Promise((resolve) => setTimeout(resolve, delayMs));

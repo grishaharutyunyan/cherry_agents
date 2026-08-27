@@ -25,9 +25,11 @@ export const config = {
    * of the Gemini Developer API's own billing. Authenticates via standard GCP
    * Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS pointing at
    * a service account key, typically) — NOT an API key, so geminiApiKey isn't
-   * required in this mode. GOOGLE_CLOUD_PROJECT/GOOGLE_CLOUD_LOCATION and the
-   * ADC credentials themselves are read directly by @google/genai and the
-   * underlying google-auth-library, not through this config object.
+   * required in this mode. GOOGLE_CLOUD_PROJECT and the ADC credentials
+   * themselves are read directly by @google/genai and the underlying
+   * google-auth-library, not through this config object — but the location is
+   * NOT read from GOOGLE_CLOUD_LOCATION; see gemini/client.ts's createClient,
+   * it's DB-backed (ai_agent_settings) instead.
    */
   useVertexAI: process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true' || process.env.GOOGLE_GENAI_USE_VERTEXAI === '1',
 

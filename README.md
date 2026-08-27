@@ -59,22 +59,33 @@ and `<monorepo root>/game-frontend` — on this dev machine that's already your
 existing sibling checkouts, so you usually don't need to set them explicitly
 for local runs.
 
-## Model configuration
+## Model & location configuration
 
-Per-phase Gemini model selection (`parse`/`design`/`build`/`qa`) lives in the
-`ai_agent_model_config` table (`db/migrations/0002_model_config.sql`,
-`src/db/model-config.repo.ts`'s `getModelForPhase`), not env vars — read
-fresh once per phase invocation, no caching. To change a phase's model:
+Two things that used to be env vars are DB-backed instead — both editable in
+the admin panel's AI Agents page (gear icon), and both take effect on the
+next thing that reads them, no redeploy or restart.
+
+**Per-phase Gemini model** (`parse`/`design`/`build`/`qa`) — `ai_agent_model_config`
+table (`db/migrations/0002_model_config.sql`, `src/db/model-config.repo.ts`'s
+`getModelForPhase`), read fresh once per phase invocation, no caching:
 
 ```sql
 UPDATE ai_agent_model_config SET model = 'gemini-3.1-pro-preview' WHERE phase = 'design';
 ```
 
-Takes effect on the next run to reach that phase — no redeploy or restart.
-A phase with no row throws immediately rather than silently falling back to
-some hardcoded default (this replaced `GEMINI_MODEL_PARSE`/`DESIGN`/`BUILD`/
-`QA` env vars, which had exactly that failure mode: an env override on the
-deploy target silently kept beating a code-level default change).
+**Vertex AI location** — `ai_agent_settings` table (`db/migrations/0003_settings.sql`,
+`src/db/settings.repo.ts`'s `getSetting`), read fresh on every client construction
+(only relevant in Vertex mode; see "Gemini authentication" above):
+
+```sql
+UPDATE ai_agent_settings SET value = 'global' WHERE key = 'googleCloudLocation';
+```
+
+Both fail loudly (throw) rather than silently falling back to a hardcoded default
+when a row is missing — this replaced env vars (`GEMINI_MODEL_PARSE`/`DESIGN`/`BUILD`/
+`QA`, `GOOGLE_CLOUD_LOCATION`) that had exactly the opposite, worse failure mode: a
+stale override on the deploy target silently beating a code-level default change,
+undetected until manually checked.
 
 ## Knowledge docs
 
@@ -231,28 +242,24 @@ billing. This is a real authentication switch, not just a config flag:
    ```
    GOOGLE_GENAI_USE_VERTEXAI=true
    GOOGLE_CLOUD_PROJECT=<your-gcp-project-id>
-   GOOGLE_CLOUD_LOCATION=global
    GOOGLE_APPLICATION_CREDENTIALS=/path/to/the/key.json
    ```
-   Leave `GEMINI_API_KEY` blank — it's not read in this mode.
-
-   **`GOOGLE_CLOUD_LOCATION` must be `global`, not a regional location like
-   `us-central1`.** Every Gemini 3.x model (3.6-flash, 3.7-flash,
-   3.1-pro-preview — all of them) is global/multi-region only on Vertex AI;
-   a regional location 404s with "Publisher model ... was not found" on
-   every single one of them, regardless of which model you pick (confirmed
-   live, 2026-08-27 — this cost real debugging time chasing what looked
-   like a bad model name before the actual cause, the location, was found).
+   Leave `GEMINI_API_KEY` blank — it's not read in this mode. There's no
+   `GOOGLE_CLOUD_LOCATION` env var — see "Model & location configuration" below,
+   it's DB-backed instead, seeded to `global`.
 5. In Docker, the key file has to be **bind-mounted into the container** —
    `GOOGLE_APPLICATION_CREDENTIALS` is a path, and it has to resolve inside
    the container's filesystem, not the host's. See
    `docker-compose.staging.yml`'s `cherry_agents` service for the mount.
 
-The SDK (`@google/genai`, via `google-auth-library` underneath) reads
-`GOOGLE_GENAI_USE_VERTEXAI`/`GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION`
-and resolves Application Default Credentials automatically — `src/gemini/client.ts`'s
-`getClient()` just constructs `new GoogleGenAI({})` with no explicit options
-in Vertex mode rather than passing an API key.
+The SDK (`@google/genai`, via `google-auth-library` underneath) resolves
+Application Default Credentials automatically from `GOOGLE_APPLICATION_CREDENTIALS` —
+`src/gemini/client.ts`'s `createClient()` passes `project`/`location`/`vertexai`
+explicitly instead of leaving them to the SDK's own env-var auto-detection (real
+precedent: a hardcoded regional `GOOGLE_CLOUD_LOCATION`, `us-central1`, 404s on every
+single Gemini 3.x model, since they're global/multi-region only on Vertex AI,
+2026-08-27 — this cost real debugging time chasing what looked like a bad model name
+before the actual cause, the location, was found).
 
 ## Env vars
 

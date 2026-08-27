@@ -44,7 +44,7 @@ export async function parsePrompt(
   prompt: string,
   overrides: Record<string, unknown> | null,
 ): Promise<AiAgentRunParsedFields | null> {
-  const ai = getClient();
+  const ai = await getClient();
   const model = await getModelForPhase('parse');
 
   const response = await ai.models.generateContent({
