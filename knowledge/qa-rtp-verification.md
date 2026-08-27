@@ -92,7 +92,25 @@ while one specific config is badly off.
   inverted, since it's easy to copy-paste backwards from a reference
   game.
 
-## 4. Build gates
+## 4. Design-tokens contract (if a design-tokens JSON exists for this game)
+
+Two checks, deliberately different in kind — see the 2026-08-28 visual-tokens-and-juice
+design spec:
+
+- **Hex-lint (deterministic — use the `lint_hardcoded_colors` tool, don't eyeball it).** Call
+  it once; it scans the frontend game directory for raw hex/`rgb()`/`rgba()` literals outside
+  the token file. Any hit is a fail, `routeHint: frontend` — the component should reference a
+  CSS variable derived from `colorTokens` instead.
+- **Tier-wiring (structural — read the code yourself).** For each of the three
+  `animationTiers`, confirm: the component imports the tokens JSON; there's a conditional
+  comparing the real outcome multiplier against that tier's `minMultiplier`/`maxMultiplier`;
+  the branch contains actual executable logic (not empty, not a no-op, not a `TODO`). This is
+  a presence/structure check only — do NOT judge whether the effect *looks* like a "particle
+  fountain" or matches the brief's tone; that's the Lead Orchestrator's job downstream, not
+  yours. A branch with any real animation code, however simple, passes this check. Missing or
+  empty branch is a fail, `routeHint: frontend`.
+
+## 5. Build gates
 
 - `npm run lint` clean in both `game_backend` and `game-frontend`.
 - `npm run build` clean in both.
@@ -107,7 +125,7 @@ while one specific config is badly off.
   and render), not a design review — placement/UX judgment belongs to
   `game-frontend-builder`, QA only confirms nothing was skipped.
 
-## 5. Reporting format
+## 6. Reporting format
 
 Report pass/fail per check above as a short table (check name,
 result, number if applicable) — not narrative prose, not raw

@@ -32,6 +32,10 @@ Every game gets its own original visual identity, animation feel, and motion —
 
 You have four tools: read_file, list_files (whole monorepo, read-only), write_file (scoped only to this game's own directory under game-frontend/games/ and its registration page under game-frontend/app/games/ — it creates any needed parent directories automatically, you never need mkdir), and run_shell (cwd pinned to game-frontend; allowed: git status/diff/add/commit, npm run lint, npm run build — not a general shell, no mkdir, no pipes/redirects/globs).
 
+If a design-tokens JSON is provided below, you MUST consume it, not improvise your own palette:
+- Generate CSS custom properties from its colorTokens, defined in EXACTLY ONE file named theme.css (or theme.ts/theme.tsx if you need a JS object instead of CSS custom properties) at the root of this game's own directory — this is the only file allowed to contain the real hex values. Every other file references the variables (e.g. var(--accent) or an import from theme.ts) — never hardcodes hex or rgb()/rgba() literals. QA's lint tool knows to skip exactly this filename and will fail the build on any hex/rgb literal found anywhere else.
+- Implement its animationTiers as conditional logic keyed on the real outcome multiplier from the WS contract's game_result event (or equivalent) — one conditional per tier, each checking the outcome multiplier against that tier's minMultiplier/maxMultiplier, with your own bespoke animation code inside (no shared animation library exists in this codebase — write each effect yourself, in whatever way fits this game, using the tier's "effects" labels and the visual-identity brief's prose as your creative brief for what each one should feel like, not literal function names to call).
+
 Follow this checklist exactly:
 
 --- adding-a-new-game-frontend.md ---
@@ -45,7 +49,33 @@ You are committing directly to an already-checked-out feature branch — do not 
 When done, reply with plain text (no more tool calls) summarizing the files you created/modified and confirming lint+build passed, and confirming all six mandatory UI pieces from the checklist's §6 are present.`;
 }
 
-function buildUserMessage(parsedFields: AiAgentRunParsedFields, specDocContent: string, retryFeedback: string | null): string {
+function buildUserMessage(
+  parsedFields: AiAgentRunParsedFields,
+  specDocContent: string,
+  designUxContent: string | null,
+  designTokensContent: string | null,
+  retryFeedback: string | null,
+): string {
+  const visualBrief = designUxContent
+    ? `
+
+Visual identity brief (from the Design & UX phase — use this for palette, theme, and UI layout choices instead of improvising your own):
+
+---
+${designUxContent}
+---`
+    : '';
+
+  const tokens = designTokensContent
+    ? `
+
+Design tokens JSON (colorTokens + animationTiers — see the system prompt's instructions on how to consume this):
+
+---
+${designTokensContent}
+---`
+    : '';
+
   const base = `Implement the game-frontend module for:
 
 - gameId: ${parsedFields.gameId}
@@ -57,7 +87,7 @@ Full spec doc (source of truth for the WebSocket contract and provably-fair deri
 
 ---
 ${specDocContent}
----`;
+---${visualBrief}${tokens}`;
 
   if (!retryFeedback) return base;
   return `${base}
@@ -71,6 +101,8 @@ Read your previous implementation first via read_file/list_files, then fix the i
 export async function runFrontendBuildPhase(
   parsedFields: AiAgentRunParsedFields,
   specDocContent: string,
+  designUxContent: string | null,
+  designTokensContent: string | null,
   retryFeedback: string | null,
   onEvent: AgentEventHandler,
 ): Promise<BuildPhaseResult> {
@@ -92,7 +124,7 @@ export async function runFrontendBuildPhase(
         makeWriteFileTool(config.monorepoRoot, [gameDir, pageFile]),
         makeRunShellTool('run_shell', config.gameFrontendPath, BUILD_SHELL_ALLOWLIST),
       ],
-      initialUserMessage: buildUserMessage(parsedFields, specDocContent, retryFeedback),
+      initialUserMessage: buildUserMessage(parsedFields, specDocContent, designUxContent, designTokensContent, retryFeedback),
       maxTurns: config.maxTurnsBuild,
       onEvent,
       requireToolCall: {

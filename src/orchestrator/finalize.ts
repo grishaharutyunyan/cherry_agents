@@ -42,12 +42,22 @@ function appendToGamesJson(parsedFields: AiAgentRunParsedFields): void {
   fs.writeFileSync(gamesJsonPath, `${JSON.stringify(games, null, 2)}\n`, 'utf8');
 }
 
-function buildThumbnailPrompt(parsedFields: AiAgentRunParsedFields): string {
+function buildThumbnailPrompt(parsedFields: AiAgentRunParsedFields, designUxContent: string | null): string {
+  const visualAnchorSection = designUxContent
+    ? `
+
+Visual identity brief from the Design & UX phase (use this for the actual palette/mood/theme instead of the generic style guidance below):
+
+---
+${designUxContent}
+---`
+    : '';
+
   return `# Thumbnail prompt — ${parsedFields.gameName}
 
 A vibrant, polished 1:1 square casino-app game icon for "${parsedFields.gameName}" (${parsedFields.archetype} archetype, ${parsedFields.category} category). ${parsedFields.description}
 
-Style: match the house's existing game icon set — bold saturated colors, high-contrast central subject, subtle glossy/neon highlights, no text or UI chrome baked into the image, a clean silhouette readable at small sizes (e.g. a sidebar thumbnail). Composition: the game's core visual motif centered, dramatic lighting, casino/gambling aesthetic — thematic props appropriate to the game's own theme, not generic cards/dice unless the game itself is card/dice-based.
+Style: match the house's existing game icon set — bold saturated colors, high-contrast central subject, subtle glossy/neon highlights, no text or UI chrome baked into the image, a clean silhouette readable at small sizes (e.g. a sidebar thumbnail). Composition: the game's core visual motif centered, dramatic lighting, casino/gambling aesthetic — thematic props appropriate to the game's own theme, not generic cards/dice unless the game itself is card/dice-based.${visualAnchorSection}
 
 Generate the actual image with your own image-generation tool, then place it at \`public/thumbnails/${parsedFields.gameId}.<ext>\` in game-frontend and wire it via the backend's \`thumbnail\` field on \`IGameConfig\`.
 `;
@@ -83,12 +93,16 @@ curl -X POST "\${ADMIN_BASE_URL}/gambling/games/refresh-configs" \\
 function buildFinalHandoff(
   parsedFields: AiAgentRunParsedFields,
   specDocContent: string,
+  leadReviewNotes: string | null,
   qaChecks: AiAgentRunQaCheck[],
   qaSummary: string,
 ): string {
   const qaTable = qaChecks
     .map((c) => `| ${c.check} | ${c.pass ? 'PASS' : 'FAIL'} | ${c.measured ?? ''} | ${c.expected ?? ''} |`)
     .join('\n');
+  const leadReviewSection = leadReviewNotes
+    ? `\n\n## Lead Orchestrator review\n\n${leadReviewNotes}`
+    : '';
   return `# Handoff — ${parsedFields.gameName}
 
 Built by the Gemini AI-agent pipeline (\`cherry_agents\`) — a separate pipeline from the Claude-Code-driven \`/create-game\` command.
@@ -99,7 +113,7 @@ ${qaSummary}
 
 | Check | Result | Measured | Expected |
 |---|---|---|---|
-${qaTable}
+${qaTable}${leadReviewSection}
 
 ## Spec
 
@@ -115,6 +129,8 @@ ${specDocContent}
 export async function runFinalizePhase(
   parsedFields: AiAgentRunParsedFields,
   specDocContent: string,
+  designUxContent: string | null,
+  leadReviewNotes: string | null,
   qaChecks: AiAgentRunQaCheck[],
   qaSummary: string,
   backendBranch: string,
@@ -125,8 +141,8 @@ export async function runFinalizePhase(
   const handoffsDir = path.join(config.gameBackendPath, 'docs', 'ai-agent-handoffs');
   fs.mkdirSync(handoffsDir, { recursive: true });
 
-  const finalHandoffContent = buildFinalHandoff(parsedFields, specDocContent, qaChecks, qaSummary);
-  const thumbnailPromptContent = buildThumbnailPrompt(parsedFields);
+  const finalHandoffContent = buildFinalHandoff(parsedFields, specDocContent, leadReviewNotes, qaChecks, qaSummary);
+  const thumbnailPromptContent = buildThumbnailPrompt(parsedFields, designUxContent);
   const adminPayloadContent = buildAdminPayload(parsedFields);
 
   fs.writeFileSync(path.join(handoffsDir, `HANDOFF_${parsedFields.fileSlug}.md`), finalHandoffContent, 'utf8');

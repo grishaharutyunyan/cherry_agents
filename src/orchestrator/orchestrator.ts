@@ -3,7 +3,9 @@ import { appendEvent, updateRun } from '../db/runs.repo';
 import { AiAgentRunPhase, AiAgentRunQaCheck, AiAgentRunRow } from '../db/types';
 import { runBackendBuildPhase } from '../gemini/phases/backend-build.phase';
 import { runDesignPhase } from '../gemini/phases/design.phase';
+import { runDesignUxPhase } from '../gemini/phases/design-ux.phase';
 import { runFrontendBuildPhase } from '../gemini/phases/frontend-build.phase';
+import { runLeadReviewPhase } from '../gemini/phases/lead-review.phase';
 import { runQaPhase } from '../gemini/phases/qa.phase';
 import { AgentEventHandler } from '../gemini/types';
 import { pushBranch } from '../git/repo';
@@ -26,11 +28,17 @@ export async function runOnePhaseStep(run: AiAgentRunRow): Promise<void> {
       case 'design':
         await handleDesign(run);
         return;
+      case 'design_ux':
+        await handleDesignUx(run);
+        return;
       case 'building':
         await handleBuilding(run);
         return;
       case 'qa':
         await handleQa(run);
+        return;
+      case 'lead_review':
+        await handleLeadReview(run);
         return;
       case 'retry_design':
         await handleRetryDesign(run);
@@ -63,20 +71,41 @@ function errMsg(err: unknown): string {
 }
 
 async function handleParsing(run: AiAgentRunRow): Promise<void> {
-  await appendEvent(run.id, 'parsing', 'phase_started');
-  const parsedFields = await parsePrompt(run.prompt, run.overrides);
+  await appendEvent(run.id, 'parsing', 'phase_started', { revision: Boolean(run.clarificationQuestion) });
 
-  if (!parsedFields) {
-    const failureReason =
-      'Could not confidently determine gameName/rtpTarget/freebetEnabled from the prompt. ' +
-      'Re-trigger with a more complete prompt or explicit overrides.';
-    await appendEvent(run.id, 'parsing', 'error', { message: failureReason });
-    await updateRun(run.id, { phase: 'failed', failureReason, completedAt: new Date() });
+  // A prior clarification round left the question on the row and the admin's answer in
+  // approvalFeedback (see ai-agent-run.service.ts's clarify() — same reused-field convention as
+  // the design-revision flow). Both are consumed here, not carried further.
+  const priorClarification =
+    run.clarificationQuestion && run.approvalFeedback
+      ? { question: run.clarificationQuestion, answer: run.approvalFeedback }
+      : null;
+
+  const result = await parsePrompt(run.prompt, run.overrides, priorClarification);
+
+  if (result.status === 'failed') {
+    await appendEvent(run.id, 'parsing', 'error', { message: result.reason });
+    await updateRun(run.id, { phase: 'failed', failureReason: result.reason, completedAt: new Date() });
     return;
   }
 
-  await appendEvent(run.id, 'parsing', 'phase_completed', { parsedFields });
-  await updateRun(run.id, { phase: 'design', parsedFields });
+  if (result.status === 'needs_clarification') {
+    await appendEvent(run.id, 'parsing', 'phase_completed', { clarificationQuestion: result.question });
+    await updateRun(run.id, {
+      phase: 'needs_clarification',
+      clarificationQuestion: result.question,
+      approvalFeedback: null,
+    });
+    return;
+  }
+
+  await appendEvent(run.id, 'parsing', 'phase_completed', { parsedFields: result.fields });
+  await updateRun(run.id, {
+    phase: 'design',
+    parsedFields: result.fields,
+    clarificationQuestion: null,
+    approvalFeedback: null,
+  });
 }
 
 async function handleDesign(run: AiAgentRunRow): Promise<void> {
@@ -95,9 +124,36 @@ async function handleDesign(run: AiAgentRunRow): Promise<void> {
     reportText: result.reportText,
   });
   await updateRun(run.id, {
-    phase: 'awaiting_approval',
+    phase: 'design_ux',
     specDocContent: result.specDocContent,
     specDocPath: result.specDocPath,
+    approvalFeedback: null,
+  });
+}
+
+async function handleDesignUx(run: AiAgentRunRow): Promise<void> {
+  if (!run.parsedFields || !run.specDocContent) {
+    // Should never happen — parsing always sets parsedFields, and design always sets
+    // specDocContent, before advancing to design_ux.
+    throw new Error('Design & UX phase reached with no parsedFields/specDocContent');
+  }
+
+  await appendEvent(run.id, 'design_ux', 'phase_started');
+  const onEvent: AgentEventHandler = (event) => appendEvent(run.id, 'design_ux', event.type, event.detail as Record<string, unknown>);
+
+  const result = await runDesignUxPhase(run.parsedFields, run.specDocContent, run.approvalFeedback, onEvent);
+
+  await appendEvent(run.id, 'design_ux', 'phase_completed', {
+    designUxDocPath: result.designUxDocPath,
+    designTokensDocPath: result.designTokensDocPath,
+    reportText: result.reportText,
+  });
+  await updateRun(run.id, {
+    phase: 'awaiting_approval',
+    designUxContent: result.designUxContent,
+    designUxDocPath: result.designUxDocPath,
+    designTokensContent: result.designTokensContent,
+    designTokensDocPath: result.designTokensDocPath,
     approvalFeedback: null,
   });
 }
@@ -126,7 +182,16 @@ async function handleBuilding(run: AiAgentRunRow): Promise<void> {
   }
 
   try {
-    frontendBranch = (await runFrontendBuildPhase(run.parsedFields, run.specDocContent, null, makeHandler('frontend'))).branch;
+    frontendBranch = (
+      await runFrontendBuildPhase(
+        run.parsedFields,
+        run.specDocContent,
+        run.designUxContent,
+        run.designTokensContent,
+        null,
+        makeHandler('frontend'),
+      )
+    ).branch;
   } catch (err) {
     reasons.push(`frontend: ${errMsg(err)}`);
   }
@@ -149,7 +214,14 @@ async function handleQa(run: AiAgentRunRow): Promise<void> {
   await appendEvent(run.id, 'qa', 'phase_started');
   const onEvent: AgentEventHandler = (event) => appendEvent(run.id, 'qa', event.type, event.detail as Record<string, unknown>);
 
-  const result = await runQaPhase(run.parsedFields, run.specDocContent, run.backendBranch, run.frontendBranch, onEvent);
+  const result = await runQaPhase(
+    run.parsedFields,
+    run.specDocContent,
+    run.designTokensContent,
+    run.backendBranch,
+    run.frontendBranch,
+    onEvent,
+  );
 
   await appendEvent(run.id, 'qa', 'phase_completed', {
     overallPass: result.overallPass,
@@ -158,12 +230,14 @@ async function handleQa(run: AiAgentRunRow): Promise<void> {
   });
 
   if (result.overallPass) {
-    // Push both branches now (before human review) so an admin reviewing at the next gate can
-    // click through to a real GitHub compare view — finalize.ts pushes again after adding its
-    // own commit (games.json + handoff docs), which is a safe no-op push if nothing changed here.
+    // Push both branches now (before review) so an admin reviewing at the eventual human gate can
+    // click through to a real GitHub compare view — finalize.ts pushes again after adding its own
+    // commit (games.json + handoff docs), which is a safe no-op push if nothing changed here.
     await pushBranch(config.gameBackendPath, run.backendBranch as string);
     await pushBranch(config.gameFrontendPath, run.frontendBranch as string);
-    await updateRun(run.id, { phase: 'awaiting_finalize_approval', qaReport: result.checks });
+    // Structural QA passing doesn't mean the build actually satisfies what was asked — that
+    // semantic judgment is the Lead Orchestrator's job, not QA's. See handleLeadReview.
+    await updateRun(run.id, { phase: 'lead_review', qaReport: result.checks });
     return;
   }
 
@@ -186,6 +260,74 @@ async function handleQa(run: AiAgentRunRow): Promise<void> {
   });
 }
 
+/**
+ * LLM-as-judge supervisor step, runs only after QA has structurally passed (see handleQa's
+ * success branch). Where QA checks "is this correct" (RTP math, lint, build, contract shape),
+ * this checks "does this actually satisfy what was asked" — a semantic evaluation no deterministic
+ * check in this pipeline performs. Approving forwards to the existing human milestone gate
+ * (awaiting_finalize_approval) unchanged; rejecting reuses the exact same retry_design/retry_build
+ * machinery QA's own failure routing uses, so a Lead-triggered revision goes through the identical
+ * revise → rebuild → re-QA → re-review loop, not a parallel mechanism.
+ */
+async function handleLeadReview(run: AiAgentRunRow): Promise<void> {
+  if (!run.parsedFields || !run.specDocContent || !run.backendBranch || !run.frontendBranch) {
+    throw new Error('Lead review phase reached with missing prerequisites (parsedFields/specDocContent/backendBranch/frontendBranch)');
+  }
+  await appendEvent(run.id, 'lead_review', 'phase_started');
+  const onEvent: AgentEventHandler = (event) => appendEvent(run.id, 'lead_review', event.type, event.detail as Record<string, unknown>);
+
+  const qaSummary = run.qaReport?.length
+    ? `${run.qaReport.filter((c) => c.pass).length}/${run.qaReport.length} structural checks passed.`
+    : 'Structural QA passed.';
+
+  const result = await runLeadReviewPhase(
+    run.prompt,
+    run.overrides,
+    run.parsedFields,
+    run.specDocContent,
+    run.designUxContent,
+    run.designTokensContent,
+    qaSummary,
+    run.qaReport ?? [],
+    run.backendBranch,
+    run.frontendBranch,
+    onEvent,
+  );
+
+  await appendEvent(run.id, 'lead_review', 'phase_completed', { verdict: result.verdict, reasoning: result.reasoning });
+
+  if (result.verdict === 'approve') {
+    await updateRun(run.id, { phase: 'awaiting_finalize_approval', leadReviewNotes: result.reasoning });
+    return;
+  }
+
+  if (run.retryCount >= MAX_RETRIES) {
+    // Same principle as the fail-open cases inside lead-review.phase.ts: a strict/wrong verdict
+    // must never be the reason a run dies once the automated budget is spent — forward to the
+    // human gate with the concern attached instead of failing outright.
+    await appendEvent(run.id, 'lead_review', 'retry_routed', { note: 'retries exhausted, forwarding to human review anyway' });
+    await updateRun(run.id, {
+      phase: 'awaiting_finalize_approval',
+      leadReviewNotes:
+        `Lead Orchestrator flagged a semantic-fit concern but the automated retry budget is exhausted — forwarding for your review.\n\n${result.reasoning}` +
+        (result.revisionNotes ? `\n\nSuggested revision: ${result.revisionNotes}` : ''),
+    });
+    return;
+  }
+
+  const nextPhase: AiAgentRunPhase = result.routeHint === 'design' ? 'retry_design' : 'retry_build';
+  await appendEvent(run.id, 'lead_review', 'retry_routed', { routeHint: result.routeHint, nextPhase });
+  await updateRun(run.id, {
+    phase: nextPhase,
+    leadReviewNotes: result.reasoning,
+    // Reused by handleRetryDesign/handleRetryBuild as the actual feedback text — same convention
+    // as a human rejection at the finalize-approval gate (see handleRetryBuild's comment below).
+    approvalFeedback: result.revisionNotes ?? result.reasoning,
+    retryCount: run.retryCount + 1,
+    lastQaFailureRoute: result.routeHint ?? 'ambiguous',
+  });
+}
+
 function summarizeQaFailures(qaReport: AiAgentRunQaCheck[] | null): string {
   if (!qaReport) return 'QA failed (no detail available).';
   const failed = qaReport.filter((c) => !c.pass);
@@ -196,7 +338,12 @@ function summarizeQaFailures(qaReport: AiAgentRunQaCheck[] | null): string {
 async function handleRetryDesign(run: AiAgentRunRow): Promise<void> {
   if (!run.parsedFields) throw new Error('retry_design reached with no parsedFields');
   await appendEvent(run.id, 'retry_design', 'phase_started');
-  const feedback = summarizeQaFailures(run.qaReport);
+  // Prefer explicit feedback (a human rejection, or the Lead Orchestrator's revisionNotes — both
+  // land in approvalFeedback, see handleLeadReview/ai-agent-run.service.ts's approve()) over
+  // deriving text from qaReport, which only reflects QA's structural findings and would be stale
+  // or misleading here (QA passed — that's why lead_review ran at all) when a Lead rejection is
+  // what triggered this retry. Same precedence handleRetryBuild already uses.
+  const feedback = run.approvalFeedback ?? summarizeQaFailures(run.qaReport);
   const onEvent: AgentEventHandler = (event) => appendEvent(run.id, 'retry_design', event.type, event.detail as Record<string, unknown>);
 
   const result = await runDesignPhase(run.parsedFields, feedback, onEvent);
@@ -221,9 +368,13 @@ async function handleRetryBuild(run: AiAgentRunRow): Promise<void> {
   // automated QA finding when both could theoretically be present.
   const feedback = run.approvalFeedback ?? summarizeQaFailures(run.qaReport);
   const routes = (run.lastQaFailureRoute ?? '').split(',').filter(Boolean);
-  // No route info (e.g. this retry_build follows a retry_design) or an ambiguous route retries both.
-  const retryBackend = routes.length === 0 || routes.includes('backend') || routes.includes('ambiguous');
-  const retryFrontend = routes.length === 0 || routes.includes('frontend') || routes.includes('ambiguous');
+  // No route info, an ambiguous route, or a route of exactly "design" all retry both builders —
+  // "design" means the spec itself just changed underneath both of them (neither builder's code
+  // has been touched to match the revision yet), so skipping either one here would leave it built
+  // against a stale spec. (A route set that mixes "design" with "backend" or "frontend" already
+  // retries both anyway, via the .includes checks below — this only matters for a pure "design" route.)
+  const retryBackend = routes.length === 0 || routes.includes('backend') || routes.includes('ambiguous') || routes.includes('design');
+  const retryFrontend = routes.length === 0 || routes.includes('frontend') || routes.includes('ambiguous') || routes.includes('design');
 
   const makeHandler = (builder: 'backend' | 'frontend'): AgentEventHandler => (event) =>
     appendEvent(run.id, 'retry_build', event.type, { ...(event.detail as Record<string, unknown>), builder });
@@ -239,7 +390,14 @@ async function handleRetryBuild(run: AiAgentRunRow): Promise<void> {
   }
   if (retryFrontend) {
     try {
-      await runFrontendBuildPhase(run.parsedFields, run.specDocContent, feedback, makeHandler('frontend'));
+      await runFrontendBuildPhase(
+        run.parsedFields,
+        run.specDocContent,
+        run.designUxContent,
+        run.designTokensContent,
+        feedback,
+        makeHandler('frontend'),
+      );
     } catch (err) {
       reasons.push(`frontend: ${errMsg(err)}`);
     }
@@ -266,6 +424,8 @@ async function handleFinalizing(run: AiAgentRunRow): Promise<void> {
   const result = await runFinalizePhase(
     run.parsedFields,
     run.specDocContent,
+    run.designUxContent,
+    run.leadReviewNotes,
     run.qaReport ?? [],
     qaSummary,
     run.backendBranch,

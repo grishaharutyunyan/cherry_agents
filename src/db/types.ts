@@ -1,6 +1,9 @@
 export type AiAgentRunPhase =
   | 'parsing'
+  | 'needs_clarification'
   | 'design'
+  | 'design_ux'
+  | 'lead_review'
   | 'awaiting_approval'
   | 'building'
   | 'qa'
@@ -14,8 +17,12 @@ export type AiAgentRunPhase =
 
 export const AI_AGENT_RUN_TERMINAL_PHASES: AiAgentRunPhase[] = ['done', 'failed', 'cancelled'];
 
-/** Skipped by the worker's claim query — only the admin approve endpoint moves a run out of these phases. */
-export const AI_AGENT_RUN_PARKED_PHASES: AiAgentRunPhase[] = ['awaiting_approval', 'awaiting_finalize_approval'];
+/** Skipped by the worker's claim query — only an admin action (approve/clarify) moves a run out of these phases. */
+export const AI_AGENT_RUN_PARKED_PHASES: AiAgentRunPhase[] = [
+  'needs_clarification',
+  'awaiting_approval',
+  'awaiting_finalize_approval',
+];
 
 export interface AiAgentRunParsedFields {
   gameId: string;
@@ -47,10 +54,16 @@ export interface AiAgentRunRow {
   phase: AiAgentRunPhase;
   approved: boolean;
   approvalFeedback: string | null;
+  clarificationQuestion: string | null;
   retryCount: number;
   lastQaFailureRoute: string | null;
   specDocContent: string | null;
   specDocPath: string | null;
+  designUxContent: string | null;
+  designUxDocPath: string | null;
+  designTokensContent: string | null;
+  designTokensDocPath: string | null;
+  leadReviewNotes: string | null;
   finalHandoffContent: string | null;
   qaReport: AiAgentRunQaCheck[] | null;
   backendBranch: string | null;
