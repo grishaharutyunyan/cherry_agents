@@ -126,6 +126,28 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
     if (!modelContent) {
       throw new Error('Gemini returned no content in its response');
     }
+
+    const finishReason = response.candidates?.[0]?.finishReason;
+    const hasParts = Array.isArray(modelContent.parts) && modelContent.parts.length > 0;
+    if (!hasParts || finishReason === 'MALFORMED_FUNCTION_CALL') {
+      // A parts-less Content (Gemini occasionally returns finishReason=MALFORMED_FUNCTION_CALL
+      // with no parts, especially on flash-tier models mid tool-calling loop) fails the SDK's own
+      // tContents() validation the moment it's mixed into `contents` alongside proper Content
+      // entries — every LATER call in this session then throws a client-side "Mixing Content and
+      // Parts" error, including every retry attempt in generateContentWithRetry (they reuse this
+      // same now-poisoned array), which is what made it look like per-client-instance corruption
+      // rather than a poisoned conversation history. Never push it — nudge the model to retry the
+      // turn instead. Naturally bounded by maxTurns; no separate retry counter needed.
+      await params.onEvent?.({
+        type: 'gemini_message',
+        detail: { turn, text: `[malformed response from Gemini, finishReason=${finishReason ?? 'unknown'} — retrying turn]` },
+      });
+      contents.push({
+        role: 'user',
+        parts: [{ text: 'Your previous response was malformed or empty and could not be used. Please try again.' }],
+      });
+      continue;
+    }
     contents.push(modelContent);
 
     const calls = response.functionCalls;
