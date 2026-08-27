@@ -10,6 +10,7 @@ import { runAgenticSession } from '../client';
 import { makeListFilesTool } from '../tools/list-files.tool';
 import { makeReadFileTool } from '../tools/read-file.tool';
 import { makeRunShellTool } from '../tools/run-shell.tool';
+import { isSuccessfulGitCommit } from '../tools/shell-util';
 import { makeWriteFileTool } from '../tools/write-file.tool';
 import { AgentEventHandler } from '../types';
 import { BuildPhaseResult } from './backend-build.phase';
@@ -129,10 +130,14 @@ export async function runFrontendBuildPhase(
       onEvent,
       requireToolCall: {
         toolName: 'run_shell',
+        matches: isSuccessfulGitCommit,
         nudgeMessage:
-          'You finished without ever calling run_shell — nothing has been committed yet. Run ' +
-          'run_shell with command "git" args ["add","-A"], then command "git" args ["commit","-m","<message>"], ' +
-          'then npm run lint and npm run build via run_shell (fix any errors they report), and only then finish.',
+          'You finished without a successful git commit — either you never called run_shell for one, or your ' +
+          'last commit attempt failed (check its result for a nonzero exitCode/stderr, e.g. a commit-msg hook ' +
+          'rejection) and you moved on without fixing it. Nothing you wrote is safe until it is actually ' +
+          'committed. Run run_shell with command "git" args ["add","-A"], then command "git" args ' +
+          '["commit","-m","<message>"] — check the result for exitCode 0 — then npm run lint and npm run build ' +
+          'via run_shell (fix any errors they report, then commit again), and only then finish.',
       },
     });
 

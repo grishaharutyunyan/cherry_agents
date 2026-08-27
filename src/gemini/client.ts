@@ -86,15 +86,26 @@ export interface AgenticSessionParams {
    */
   terminalTool?: string;
   /**
-   * If the session tries to finish (no function calls) without ever having called this tool,
-   * one nudge — injected as a new user turn instead of accepting the finish — gets the model to
+   * If the session tries to finish (no function calls) without ever having made a call to
+   * `toolName` that satisfies `matches` (default: any call counts, if `matches` is omitted), one
+   * nudge — injected as a new user turn instead of accepting the finish — gets the model to
    * reconsider before the session ends for good (still bounded by maxTurns). Only nudges once,
-   * to avoid an infinite prompt loop. This is a soft nudge, not the correctness guarantee — a
-   * build phase finishing without ever calling run_shell (real precedent: a frontend build wrote
-   * 18 files and finished without a single commit, 2026-08-27) is exactly the case this targets,
-   * but the real safety net stays each build phase's own git-sha-diff check after the session.
+   * to avoid an infinite prompt loop. This is a soft nudge, not the correctness guarantee — the
+   * real safety net stays each build phase's own git-sha-diff check after the session.
+   *
+   * `matches` exists because "was the tool called at all" isn't always precise enough: a build
+   * phase calling run_shell for `git status` or a git commit that got rejected by the commit-msg
+   * hook already satisfies "called run_shell," silencing the nudge, while never actually
+   * committing (real precedent: a frontend build wrote 18 files and finished without a single
+   * commit, 2026-08-27; a backend build did the same with 6 files and a full narrated summary of
+   * "completed" work, 2026-08-28 — in both cases run_shell HAD been called, just never for a
+   * successful commit). Pass `matches` to check the call's args and its result, not just its name.
    */
-  requireToolCall?: { toolName: string; nudgeMessage: string };
+  requireToolCall?: {
+    toolName: string;
+    matches?: (args: Record<string, unknown>, result: unknown) => boolean;
+    nudgeMessage: string;
+  };
 }
 
 export interface AgenticSessionResult {
@@ -114,7 +125,7 @@ export interface AgenticSessionResult {
 export async function runAgenticSession(params: AgenticSessionParams): Promise<AgenticSessionResult> {
   const toolMap = new Map(params.tools.map((tool) => [tool.declaration.name ?? '', tool]));
   const contents: Content[] = [{ role: 'user', parts: [{ text: params.initialUserMessage }] }];
-  const calledToolNames = new Set<string>();
+  let requirementMet = false;
   let nudged = false;
 
   for (let turn = 0; turn < params.maxTurns; turn++) {
@@ -158,7 +169,7 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
     const calls = response.functionCalls;
     if (!calls || calls.length === 0) {
       const required = params.requireToolCall;
-      if (required && !calledToolNames.has(required.toolName) && !nudged) {
+      if (required && !requirementMet && !nudged) {
         nudged = true;
         contents.push({ role: 'user', parts: [{ text: required.nudgeMessage }] });
         continue;
@@ -182,7 +193,6 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
     for (const call of calls) {
       const name = call.name ?? '';
       const args = call.args ?? {};
-      calledToolNames.add(name);
       await params.onEvent?.({ type: 'tool_call', detail: { tool: name, args } });
 
       let result: unknown;
@@ -191,6 +201,11 @@ export async function runAgenticSession(params: AgenticSessionParams): Promise<A
         result = tool ? await tool.execute(args) : { error: `Unknown tool: ${name}` };
       } catch (err) {
         result = { error: err instanceof Error ? err.message : String(err) };
+      }
+
+      const required = params.requireToolCall;
+      if (required && name === required.toolName && (!required.matches || required.matches(args, result))) {
+        requirementMet = true;
       }
 
       await params.onEvent?.({ type: 'tool_result', detail: { tool: name, result } });

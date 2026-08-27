@@ -13,6 +13,21 @@ export interface ShellExecResult {
   stderr: string;
 }
 
+/**
+ * For a run_shell `requireToolCall.matches` predicate — true only for a `git commit` call whose
+ * execution actually succeeded (exitCode 0), not merely attempted (e.g. rejected by the
+ * commit-msg hook) or a same-tool call for something else (`git status`, `npm run lint`). Mirrors
+ * run-shell.tool.ts's own command+args normalization so a model that collapses "git commit" into
+ * a single `command` string is still detected correctly.
+ */
+export function isSuccessfulGitCommit(args: Record<string, unknown>, result: unknown): boolean {
+  const commandParts = String(args.command ?? '').split(/\s+/).filter(Boolean);
+  const argv = [...commandParts.slice(1), ...(Array.isArray(args.args) ? args.args.map(String) : [])];
+  const isGitCommit = commandParts[0] === 'git' && argv[0] === 'commit';
+  const succeeded = typeof result === 'object' && result !== null && (result as Partial<ShellExecResult>).exitCode === 0;
+  return isGitCommit && succeeded;
+}
+
 /** Runs `bin args` via execFile (argv array, never a shell string — no shell metacharacter risk). */
 export async function runExecFile(bin: string, args: string[], cwd: string, timeoutMs: number): Promise<ShellExecResult> {
   try {
