@@ -1,5 +1,6 @@
 import { config } from './config';
 import { pool } from './db/client';
+import { tryAcquireGitLock } from './db/git-lock';
 import { runMigrations } from './db/migrate';
 import { claimNextPendingRun } from './db/runs.repo';
 import { runOnePhaseStep } from './orchestrator/orchestrator';
@@ -8,7 +9,22 @@ async function tick(): Promise<void> {
   const run = await claimNextPendingRun();
   if (!run) return;
   console.log(`[agents] claimed run ${run.id} (phase=${run.phase})`);
-  await runOnePhaseStep(run);
+
+  // GAME_BACKEND_PATH/GAME_FRONTEND_PATH are shared working-directory checkouts, not per-run
+  // clones — serialize all phase processing across every worker instance via a Postgres
+  // advisory lock so two different runs never race on the same `git checkout`. On a miss, leave
+  // this run's own claim as-is (don't release it) rather than fighting over it — it naturally
+  // becomes reclaimable once its own lockedUntil TTL passes, by which point the lock is likely free.
+  const lock = await tryAcquireGitLock();
+  if (!lock) {
+    console.log(`[agents] run ${run.id} claimed but another run is mid-phase elsewhere — retrying next tick`);
+    return;
+  }
+  try {
+    await runOnePhaseStep(run);
+  } finally {
+    await lock.release();
+  }
 }
 
 async function main(): Promise<void> {
