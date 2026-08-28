@@ -32,17 +32,34 @@ export async function getClient(): Promise<GoogleGenAI> {
   return createClient();
 }
 
-function isRateLimitError(err: unknown): boolean {
+const TRANSIENT_NETWORK_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN', 'EPIPE']);
+
+/**
+ * Real precedent: a QA session died outright — no retry attempted at all — on a single transient
+ * network blip 15+ turns into an otherwise-healthy session (2026-08-28, failureReason exactly
+ * "fetch failed"). Node's native fetch (undici) throws a generic `TypeError: fetch failed` for
+ * ANY network-level failure (DNS, connection reset, timeout) — the real reason lives in `.cause`,
+ * not `.message`, so checking `.message` alone only catches the outer wrapper. Broadened from
+ * rate-limit-only to also cover these — a genuinely non-retryable error (bad request, auth
+ * failure, etc.) has a specific message/code that won't match either branch and still throws
+ * immediately, same as before.
+ */
+function isRetryableError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return message.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || message.includes(' 429 ');
+  if (message.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || message.includes(' 429 ')) return true;
+  if (message === 'fetch failed') return true;
+  const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+  const causeCode = cause && typeof cause === 'object' && 'code' in cause ? String((cause as { code?: unknown }).code) : null;
+  return causeCode !== null && TRANSIENT_NETWORK_CODES.has(causeCode);
 }
 
 /**
  * Real-world precedent for why this exists: building phase dispatches backend + frontend
  * sessions in parallel, each making several calls per turn — that's enough to trip Vertex AI's
  * per-project rate limit outright (2026-08-27, RESOURCE_EXHAUSTED on the very first call of both
- * sessions at once). Retries only 429/RESOURCE_EXHAUSTED with exponential backoff; anything else
- * fails immediately, same as before. Bounded to stay well under LOCK_TTL_SECONDS (120s default).
+ * sessions at once). Retries rate-limit and transient-network errors (see isRetryableError) with
+ * exponential backoff; anything else fails immediately, same as before. Bounded to stay well
+ * under LOCK_TTL_SECONDS (120s default).
  *
  * Deliberately builds a BRAND NEW client for every single attempt (never reuses one client
  * instance across retries) — real precedent: with
@@ -54,7 +71,7 @@ function isRateLimitError(err: unknown): boolean {
  * attempt makes that impossible regardless of the exact internal mechanism. Construction is
  * cheap (no network call), so this costs nothing on the common no-retry path.
  */
-async function generateContentWithRetry(
+export async function generateContentWithRetry(
   args: Parameters<GoogleGenAI['models']['generateContent']>[0],
   maxRetries = 4,
 ): Promise<Awaited<ReturnType<GoogleGenAI['models']['generateContent']>>> {
@@ -64,7 +81,7 @@ async function generateContentWithRetry(
       const client = await createClient();
       return await client.models.generateContent(structuredClone(args));
     } catch (err) {
-      if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
+      if (!isRetryableError(err) || attempt >= maxRetries) throw err;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       delayMs = Math.min(delayMs * 2, 30000);
     }

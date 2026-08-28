@@ -1,6 +1,6 @@
 import { AiAgentRunParsedFields } from '../db/types';
 import { getModelForPhase } from '../db/model-config.repo';
-import { getClient } from '../gemini/client';
+import { generateContentWithRetry } from '../gemini/client';
 
 const PARSED_FIELDS_SCHEMA = {
   type: 'object',
@@ -50,14 +50,17 @@ export async function parsePrompt(
   overrides: Record<string, unknown> | null,
   priorClarification: { question: string; answer: string } | null,
 ): Promise<ParsePromptResult> {
-  const ai = await getClient();
   const model = await getModelForPhase('parse');
 
   const followUp = priorClarification
     ? `\n\nThis is a FOLLOW-UP. You previously asked: "${priorClarification.question}"\nThe admin answered: "${priorClarification.answer}"\nUse this answer to finalize your determination. Only set clarificationQuestion again if you are still genuinely blocked after accounting for this answer.`
     : '';
 
-  const response = await ai.models.generateContent({
+  // Was a raw, un-retried ai.models.generateContent call — a transient network blip (or a
+  // rate-limit hit) failed the whole parsing phase outright with no retry at all. Routed through
+  // the same retry wrapper every other Gemini call site uses (see client.ts's
+  // generateContentWithRetry / isRetryableError).
+  const response = await generateContentWithRetry({
     model,
     contents: [
       {
