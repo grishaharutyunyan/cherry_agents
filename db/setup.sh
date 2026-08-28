@@ -64,9 +64,6 @@ BEGIN
       'retry_design','retry_build','finalizing','done','failed','cancelled'
     );
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ai_agent_runs_lastqafailureroute_enum') THEN
-    CREATE TYPE ai_agent_runs_lastqafailureroute_enum AS ENUM ('design','backend','frontend','ambiguous');
-  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ai_agent_run_events_eventtype_enum') THEN
     CREATE TYPE ai_agent_run_events_eventtype_enum AS ENUM (
       'phase_started','phase_completed','tool_call','tool_result','gemini_message','error','retry_routed'
@@ -89,7 +86,7 @@ CREATE TABLE IF NOT EXISTS ai_agent_runs (
   "approved" boolean NOT NULL DEFAULT false,
   "approvalFeedback" text,
   "retryCount" integer NOT NULL DEFAULT 0,
-  "lastQaFailureRoute" ai_agent_runs_lastqafailureroute_enum,
+  "lastQaFailureRoute" character varying,
   "specDocContent" text,
   "specDocPath" character varying,
   "finalHandoffContent" text,
@@ -147,7 +144,6 @@ ALTER TABLE schema_migrations OWNER TO cherry_agents_app;
 ALTER SEQUENCE ai_agent_runs_id_seq OWNER TO cherry_agents_app;
 ALTER SEQUENCE ai_agent_run_events_id_seq OWNER TO cherry_agents_app;
 ALTER TYPE ai_agent_runs_phase_enum OWNER TO cherry_agents_app;
-ALTER TYPE ai_agent_runs_lastqafailureroute_enum OWNER TO cherry_agents_app;
 ALTER TYPE ai_agent_run_events_eventtype_enum OWNER TO cherry_agents_app;
 SQL
 
