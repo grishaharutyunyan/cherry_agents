@@ -87,12 +87,30 @@ const RATE_LIMIT_DELAY_CAP_MS = 60_000;
 const NETWORK_MAX_RETRIES = 4;
 const NETWORK_DELAY_CAP_MS = 30_000;
 
+// Proactive spacing, not just reactive backoff-after-failure: an agentic session's turns can
+// follow each other almost instantly (a fast tool like read_file adds ~0ms of natural delay), so
+// a 20-40 turn QA session can burst well past a per-minute rate limit before ever seeing a 429.
+// Real precedent: a QA run kept re-hitting RESOURCE_EXHAUSTED even with 7 retries / a 60s backoff
+// cap, because the retry schedule only reacts after a burst already happened — it never stopped
+// the next burst from re-triggering the same limit (2026-08-28). This enforces a floor between
+// the START of any two consecutive Gemini calls process-wide (every call funnels through this one
+// function), independent of and in addition to the retry-after-failure logic above.
+const MIN_CALL_INTERVAL_MS = 4_000;
+let lastCallStartedAt = 0;
+
+async function throttleCallStart(): Promise<void> {
+  const wait = MIN_CALL_INTERVAL_MS - (Date.now() - lastCallStartedAt);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastCallStartedAt = Date.now();
+}
+
 export async function generateContentWithRetry(
   args: Parameters<GoogleGenAI['models']['generateContent']>[0],
 ): Promise<Awaited<ReturnType<GoogleGenAI['models']['generateContent']>>> {
   let delayMs = 3000;
   for (let attempt = 0; ; attempt++) {
     try {
+      await throttleCallStart();
       const client = await createClient();
       return await client.models.generateContent(structuredClone(args));
     } catch (err) {
