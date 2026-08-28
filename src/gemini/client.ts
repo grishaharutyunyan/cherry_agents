@@ -44,9 +44,13 @@ const TRANSIENT_NETWORK_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND',
  * failure, etc.) has a specific message/code that won't match either branch and still throws
  * immediately, same as before.
  */
-function isRetryableError(err: unknown): boolean {
+function isRateLimitError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  if (message.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || message.includes(' 429 ')) return true;
+  return message.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429') || message.includes(' 429 ');
+}
+
+function isTransientNetworkError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
   if (message === 'fetch failed') return true;
   const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
   const causeCode = cause && typeof cause === 'object' && 'code' in cause ? String((cause as { code?: unknown }).code) : null;
@@ -71,9 +75,20 @@ function isRetryableError(err: unknown): boolean {
  * attempt makes that impossible regardless of the exact internal mechanism. Construction is
  * cheap (no network call), so this costs nothing on the common no-retry path.
  */
+// Quota resets are typically minute-scale, not second-scale — a rate-limit hit gets far more
+// patience than a generic network blip (which usually clears within seconds) before giving up.
+// Real precedent: a QA session died outright with RESOURCE_EXHAUSTED after only ~45s of total
+// backoff (the old flat 4-retry/30s-cap schedule applied to every retryable error alike),
+// 2026-08-28 — that's not enough runway to outlast even a single per-minute quota window. This
+// only helps a genuinely transient/brief quota spike; a sustained or daily-cap exhaustion needs a
+// real quota increase in Google Cloud Console, not a longer in-process wait.
+const RATE_LIMIT_MAX_RETRIES = 7;
+const RATE_LIMIT_DELAY_CAP_MS = 60_000;
+const NETWORK_MAX_RETRIES = 4;
+const NETWORK_DELAY_CAP_MS = 30_000;
+
 export async function generateContentWithRetry(
   args: Parameters<GoogleGenAI['models']['generateContent']>[0],
-  maxRetries = 4,
 ): Promise<Awaited<ReturnType<GoogleGenAI['models']['generateContent']>>> {
   let delayMs = 3000;
   for (let attempt = 0; ; attempt++) {
@@ -81,9 +96,13 @@ export async function generateContentWithRetry(
       const client = await createClient();
       return await client.models.generateContent(structuredClone(args));
     } catch (err) {
-      if (!isRetryableError(err) || attempt >= maxRetries) throw err;
+      const rateLimited = isRateLimitError(err);
+      const retryable = rateLimited || isTransientNetworkError(err);
+      const maxRetries = rateLimited ? RATE_LIMIT_MAX_RETRIES : NETWORK_MAX_RETRIES;
+      const delayCapMs = rateLimited ? RATE_LIMIT_DELAY_CAP_MS : NETWORK_DELAY_CAP_MS;
+      if (!retryable || attempt >= maxRetries) throw err;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
-      delayMs = Math.min(delayMs * 2, 30000);
+      delayMs = Math.min(delayMs * 2, delayCapMs);
     }
   }
 }
